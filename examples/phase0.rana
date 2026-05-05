@@ -1,0 +1,18 @@
+let name = "Mehmet Hamza"
+println("Hello", name)
+
+let x = 10
+let y = 20
+println(x + y)
+
+if x < y {
+    println("x is smaller")
+} else {
+    println("x is bigger")
+}
+
+fn add(a, b) {
+    return a + b
+}
+
+println(add(5, 3))
