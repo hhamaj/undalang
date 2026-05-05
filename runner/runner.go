@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"ranalang/evaluator"
@@ -24,10 +25,14 @@ func RunFile(path string, out io.Writer, errOut io.Writer) int {
 		return 1
 	}
 
-	return RunSource(string(input), out, errOut)
+	return RunSourceInDir(string(input), filepath.Dir(path), out, errOut)
 }
 
 func RunSource(input string, out io.Writer, errOut io.Writer) int {
+	return RunSourceInDir(input, "", out, errOut)
+}
+
+func RunSourceInDir(input string, baseDir string, out io.Writer, errOut io.Writer) int {
 	l := lexer.New(input)
 	p := parser.New(l)
 	program := p.ParseProgram()
@@ -38,7 +43,7 @@ func RunSource(input string, out io.Writer, errOut io.Writer) int {
 	}
 
 	env := object.NewEnvironment()
-	result := evaluator.Eval(program, env, out)
+	result := evaluator.EvalWithContext(program, env, evaluator.NewContext(baseDir, out))
 	if errObj, ok := result.(*object.Error); ok {
 		fmt.Fprintln(errOut, errObj.Inspect())
 		return 1

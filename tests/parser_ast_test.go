@@ -82,6 +82,9 @@ func TestParserOperatorPrecedence(t *testing.T) {
 		{"a < b == c > d", "((a < b) == (c > d))"},
 		{"a || b && c", "(a || (b && c))"},
 		{"add(1, 2 * 3, 4 + 5)", "add(1, (2 * 3), (4 + 5))"},
+		{`[1, 2 + 3][0]`, "([1, (2 + 3)][0])"},
+		{`{"a": 1, "b": 2}["a"]`, `({"a": 1, "b": 2}["a"])`},
+		{`"a,b" |> strings.split(",") |> arrays.join("-")`, `(("a,b" |> strings.split(",")) |> arrays.join("-"))`},
 	}
 
 	for _, tt := range tests {
@@ -89,6 +92,35 @@ func TestParserOperatorPrecedence(t *testing.T) {
 		if program.String() != tt.expected {
 			t.Fatalf("expected=%q, got=%q", tt.expected, program.String())
 		}
+	}
+}
+
+func TestParserPhase1Forms(t *testing.T) {
+	program := parse(t, `import "strings" as s
+match "ok" {
+    "ok" -> s.upper("yes"),
+    _ -> "no",
+}`)
+	if len(program.Statements) != 2 {
+		t.Fatalf("expected 2 statements, got %d", len(program.Statements))
+	}
+	importStmt, ok := program.Statements[0].(*ast.ImportStatement)
+	if !ok {
+		t.Fatalf("stmt 0 not *ast.ImportStatement. got=%T", program.Statements[0])
+	}
+	if importStmt.Path.Value != "strings" || importStmt.Alias.Value != "s" {
+		t.Fatalf("bad import stmt: %s", importStmt.String())
+	}
+	exprStmt, ok := program.Statements[1].(*ast.ExpressionStatement)
+	if !ok {
+		t.Fatalf("stmt 1 not *ast.ExpressionStatement. got=%T", program.Statements[1])
+	}
+	match, ok := exprStmt.Expression.(*ast.MatchExpression)
+	if !ok {
+		t.Fatalf("expression not *ast.MatchExpression. got=%T", exprStmt.Expression)
+	}
+	if len(match.Arms) != 2 || !match.Arms[1].Wildcard {
+		t.Fatalf("bad match arms: %+v", match.Arms)
 	}
 }
 

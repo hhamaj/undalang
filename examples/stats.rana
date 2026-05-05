@@ -1,0 +1,18 @@
+import "arrays" as arrays
+
+fn add(total, value) {
+    return total + value
+}
+
+fn sum(values) {
+    return arrays.reduce(values, 0, add)
+}
+
+fn describe(values) {
+    let total = sum(values)
+    return {
+        "count": len(values),
+        "sum": total,
+        "first": values[0],
+    }
+}

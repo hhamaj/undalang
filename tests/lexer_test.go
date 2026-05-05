@@ -15,7 +15,10 @@ if x <= y && true || false {
     return nil
 }
 x = x + 1 - 2 * 3 / 4 % 5
-!x != y == 9 >= 8 < 7 > 6`
+!x != y == 9 >= 8 < 7 > 6
+import "strings" as s
+[1, 2] |> s.join(",")
+match x { _ -> {"ok": true}[ "ok" ] }`
 
 	tests := []struct {
 		expectedType    token.Type
@@ -73,6 +76,36 @@ x = x + 1 - 2 * 3 / 4 % 5
 		{token.Int, "7"},
 		{token.GT, ">"},
 		{token.Int, "6"},
+		{token.Import, "import"},
+		{token.String, "strings"},
+		{token.As, "as"},
+		{token.Ident, "s"},
+		{token.LBracket, "["},
+		{token.Int, "1"},
+		{token.Comma, ","},
+		{token.Int, "2"},
+		{token.RBracket, "]"},
+		{token.Pipe, "|>"},
+		{token.Ident, "s"},
+		{token.Dot, "."},
+		{token.Ident, "join"},
+		{token.LParen, "("},
+		{token.String, ","},
+		{token.RParen, ")"},
+		{token.Match, "match"},
+		{token.Ident, "x"},
+		{token.LBrace, "{"},
+		{token.Ident, "_"},
+		{token.Arrow, "->"},
+		{token.LBrace, "{"},
+		{token.String, "ok"},
+		{token.Colon, ":"},
+		{token.True, "true"},
+		{token.RBrace, "}"},
+		{token.LBracket, "["},
+		{token.String, "ok"},
+		{token.RBracket, "]"},
+		{token.RBrace, "}"},
 		{token.EOF, ""},
 	}
 

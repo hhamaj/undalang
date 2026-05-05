@@ -16,6 +16,7 @@ const Prompt = "rana> "
 func Start(in io.Reader, out io.Writer, errOut io.Writer) {
 	scanner := bufio.NewScanner(in)
 	env := object.NewEnvironment()
+	ctx := evaluator.NewContext("", out)
 
 	for {
 		fmt.Fprint(out, Prompt)
@@ -33,7 +34,7 @@ func Start(in io.Reader, out io.Writer, errOut io.Writer) {
 			continue
 		}
 
-		evaluated := evaluator.Eval(program, env, out)
+		evaluated := evaluator.EvalWithContext(program, env, ctx)
 		if evaluated == nil {
 			continue
 		}

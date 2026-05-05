@@ -35,14 +35,20 @@ const (
 	GTE   = ">="
 	And   = "&&"
 	Or    = "||"
+	Pipe  = "|>"
+	Arrow = "->"
 
 	Comma     = ","
 	Semicolon = ";"
+	Colon     = ":"
+	Dot       = "."
 
-	LParen = "("
-	RParen = ")"
-	LBrace = "{"
-	RBrace = "}"
+	LParen   = "("
+	RParen   = ")"
+	LBrace   = "{"
+	RBrace   = "}"
+	LBracket = "["
+	RBracket = "]"
 
 	Function = "FUNCTION"
 	Let      = "LET"
@@ -53,6 +59,9 @@ const (
 	Else     = "ELSE"
 	Return   = "RETURN"
 	Nil      = "NIL"
+	Import   = "IMPORT"
+	As       = "AS"
+	Match    = "MATCH"
 )
 
 var keywords = map[string]Type{
@@ -65,6 +74,9 @@ var keywords = map[string]Type{
 	"else":   Else,
 	"return": Return,
 	"nil":    Nil,
+	"import": Import,
+	"as":     As,
+	"match":  Match,
 }
 
 func LookupIdent(ident string) Type {

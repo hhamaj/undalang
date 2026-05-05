@@ -1,0 +1,26 @@
+import "strings" as strings
+import "arrays" as arrays
+import "maps" as maps
+import "json" as json
+
+fn clean(name) {
+    return name |> strings.trim |> strings.upper
+}
+
+let names = " rana, go, automation "
+    |> strings.split(",")
+    |> arrays.map(clean)
+
+let report = {
+    "first": names[0],
+    "count": len(names),
+    "names": names,
+}
+
+let status = match report["count"] {
+    0 -> "empty",
+    3 -> "ready",
+    _ -> "check",
+}
+
+println(json.stringify(maps.set(report, "status", status)))

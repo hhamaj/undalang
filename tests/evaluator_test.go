@@ -2,6 +2,9 @@ package tests
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 
 	"ranalang/evaluator"
@@ -75,7 +78,72 @@ func TestEvalPrintlnBuiltin(t *testing.T) {
 	}
 }
 
+func TestEvalArraysMapsMatchAndPipeline(t *testing.T) {
+	input := `import "strings" as strings
+import "arrays" as arrays
+
+fn bang(s) { return s + "!" }
+
+let names = "rana,go" |> strings.split(",") |> arrays.map(bang)
+let data = {"first": names[0], "count": len(names)}
+match data["count"] {
+    2 -> data["first"],
+    _ -> "bad",
+}`
+
+	evaluated, _ := testEval(t, input)
+	testExpectedObject(t, evaluated, "rana!")
+}
+
+func TestEvalMapUtilitiesAndJSON(t *testing.T) {
+	input := `import "json" as json
+import "maps" as maps
+
+let parsed = json.parse("{\"name\":\"rana\",\"items\":[1,2]}")
+let updated = maps.set(parsed, "ok", true)
+json.stringify({"name": updated["name"], "ok": maps.has(updated, "ok"), "second": updated["items"][1]})`
+
+	evaluated, _ := testEval(t, input)
+	testExpectedObject(t, evaluated, `{"name":"rana","ok":true,"second":2}`)
+}
+
+func TestEvalLocalImportAndFileIO(t *testing.T) {
+	dir := t.TempDir()
+	modulePath := filepath.Join(dir, "util.rana")
+	if err := os.WriteFile(modulePath, []byte(`fn greet(name) { return "hi " + name }
+let version = 1`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dataPath := filepath.Join(dir, "out.txt")
+
+	input := `import "util" as util
+write_file(` + strconv.Quote(dataPath) + `, util.greet("rana"))
+read_file(` + strconv.Quote(dataPath) + `) + ":" + type(util.version)`
+
+	evaluated, _ := testEvalInDir(t, input, dir)
+	testExpectedObject(t, evaluated, "hi rana:integer")
+}
+
+func TestEvalPhase1RuntimeErrors(t *testing.T) {
+	tests := []string{
+		`[1]["bad"]`,
+		`{"x": 1}[fn() { 1 }]`,
+		`import "strings" as s
+s.missing`,
+	}
+	for _, input := range tests {
+		evaluated, _ := testEval(t, input)
+		if evaluated.Type() != object.ErrorObj {
+			t.Fatalf("expected error for %q, got=%s", input, evaluated.Type())
+		}
+	}
+}
+
 func testEval(t *testing.T, input string) (object.Object, *bytes.Buffer) {
+	return testEvalInDir(t, input, "")
+}
+
+func testEvalInDir(t *testing.T, input string, baseDir string) (object.Object, *bytes.Buffer) {
 	t.Helper()
 	l := lexer.New(input)
 	p := parser.New(l)
@@ -86,7 +154,7 @@ func testEval(t *testing.T, input string) (object.Object, *bytes.Buffer) {
 
 	env := object.NewEnvironment()
 	out := &bytes.Buffer{}
-	return evaluator.Eval(program, env, out), out
+	return evaluator.EvalWithContext(program, env, evaluator.NewContext(baseDir, out)), out
 }
 
 func testExpectedObject(t *testing.T, obj object.Object, expected interface{}) {

@@ -3,6 +3,8 @@ package object
 import (
 	"bytes"
 	"fmt"
+	"hash/fnv"
+	"sort"
 	"strings"
 
 	"ranalang/ast"
@@ -20,6 +22,9 @@ const (
 	ErrorObj       = "ERROR"
 	FunctionObj    = "FUNCTION"
 	BuiltinObj     = "BUILTIN"
+	ArrayObj       = "ARRAY"
+	MapObj         = "MAP"
+	ModuleObj      = "MODULE"
 )
 
 type Object interface {
@@ -108,3 +113,80 @@ type Builtin struct {
 
 func (b *Builtin) Type() Type      { return BuiltinObj }
 func (b *Builtin) Inspect() string { return "builtin function" }
+
+type Array struct {
+	Elements []Object
+}
+
+func (a *Array) Type() Type { return ArrayObj }
+func (a *Array) Inspect() string {
+	parts := make([]string, 0, len(a.Elements))
+	for _, e := range a.Elements {
+		parts = append(parts, e.Inspect())
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+type HashKey struct {
+	Type  Type
+	Value uint64
+}
+
+type Hashable interface {
+	HashKey() HashKey
+}
+
+func (b *Boolean) HashKey() HashKey {
+	if b.Value {
+		return HashKey{Type: b.Type(), Value: 1}
+	}
+	return HashKey{Type: b.Type(), Value: 0}
+}
+
+func (i *Integer) HashKey() HashKey {
+	return HashKey{Type: i.Type(), Value: uint64(i.Value)}
+}
+
+func (s *String) HashKey() HashKey {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(s.Value))
+	return HashKey{Type: s.Type(), Value: h.Sum64()}
+}
+
+func (n *Nil) HashKey() HashKey {
+	return HashKey{Type: n.Type(), Value: 0}
+}
+
+type MapPair struct {
+	Key   Object
+	Value Object
+}
+
+type Map struct {
+	Pairs map[HashKey]MapPair
+}
+
+func (m *Map) Type() Type { return MapObj }
+func (m *Map) Inspect() string {
+	parts := make([]string, 0, len(m.Pairs))
+	for _, pair := range m.Pairs {
+		parts = append(parts, fmt.Sprintf("%s: %s", pair.Key.Inspect(), pair.Value.Inspect()))
+	}
+	sort.Strings(parts)
+	return "{" + strings.Join(parts, ", ") + "}"
+}
+
+type Module struct {
+	Name    string
+	Members map[string]Object
+}
+
+func (m *Module) Type() Type { return ModuleObj }
+func (m *Module) Inspect() string {
+	keys := make([]string, 0, len(m.Members))
+	for k := range m.Members {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return fmt.Sprintf("module %s {%s}", m.Name, strings.Join(keys, ", "))
+}

@@ -4,10 +4,15 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"ranalang/ast"
 	"ranalang/builtins"
+	"ranalang/lexer"
 	"ranalang/object"
+	"ranalang/parser"
 )
 
 var (
@@ -16,33 +21,72 @@ var (
 	nilObj   = &object.Nil{}
 )
 
+func init() {
+	builtins.ApplyFunction = applyFunction
+}
+
 func Eval(node ast.Node, env *object.Environment, out io.Writer) object.Object {
+	ctx := NewContext("", out)
+	return EvalWithContext(node, env, ctx)
+}
+
+type Context struct {
+	BaseDir string
+	Out     io.Writer
+	loading map[string]bool
+	modules map[string]*object.Module
+}
+
+func NewContext(baseDir string, out io.Writer) *Context {
+	if baseDir == "" {
+		if wd, err := os.Getwd(); err == nil {
+			baseDir = wd
+		}
+	}
+	return &Context{BaseDir: baseDir, Out: out, loading: map[string]bool{}, modules: map[string]*object.Module{}}
+}
+
+func EvalWithContext(node ast.Node, env *object.Environment, ctx *Context) object.Object {
+	out := ctx.Out
 	switch node := node.(type) {
 	case *ast.Program:
-		return evalProgram(node, env, out)
+		return evalProgram(node, env, ctx)
 	case *ast.ExpressionStatement:
-		return Eval(node.Expression, env, out)
+		return EvalWithContext(node.Expression, env, ctx)
 	case *ast.BlockStatement:
-		return evalBlockStatement(node, object.NewEnclosedEnvironment(env), out)
+		return evalBlockStatement(node, object.NewEnclosedEnvironment(env), ctx)
 	case *ast.LetStatement:
-		val := Eval(node.Value, env, out)
+		val := EvalWithContext(node.Value, env, ctx)
 		if isError(val) {
 			return val
 		}
 		env.Define(node.Name.Value, val, node.Mutable)
 		return val
 	case *ast.AssignStatement:
-		val := Eval(node.Value, env, out)
+		val := EvalWithContext(node.Value, env, ctx)
 		if isError(val) {
 			return val
 		}
 		return env.Assign(node.Name.Value, val)
 	case *ast.ReturnStatement:
-		val := Eval(node.ReturnValue, env, out)
+		val := EvalWithContext(node.ReturnValue, env, ctx)
 		if isError(val) {
 			return val
 		}
 		return &object.ReturnValue{Value: val}
+	case *ast.ImportStatement:
+		module := evalImportStatement(node, ctx)
+		if isError(module) {
+			return module
+		}
+		alias := node.Path.Value
+		if node.Alias != nil {
+			alias = node.Alias.Value
+		} else {
+			alias = defaultModuleName(alias)
+		}
+		env.Define(alias, module, false)
+		return module
 	case *ast.IntegerLiteral:
 		return &object.Integer{Value: node.Value}
 	case *ast.FloatLiteral:
@@ -54,13 +98,13 @@ func Eval(node ast.Node, env *object.Environment, out io.Writer) object.Object {
 	case *ast.NilLiteral:
 		return nilObj
 	case *ast.PrefixExpression:
-		right := Eval(node.Right, env, out)
+		right := EvalWithContext(node.Right, env, ctx)
 		if isError(right) {
 			return right
 		}
 		return evalPrefixExpression(node.Operator, right)
 	case *ast.InfixExpression:
-		left := Eval(node.Left, env, out)
+		left := EvalWithContext(node.Left, env, ctx)
 		if isError(left) {
 			return left
 		}
@@ -70,36 +114,68 @@ func Eval(node ast.Node, env *object.Environment, out io.Writer) object.Object {
 		if node.Operator == "||" && isTruthy(left) {
 			return trueObj
 		}
-		right := Eval(node.Right, env, out)
+		right := EvalWithContext(node.Right, env, ctx)
 		if isError(right) {
 			return right
 		}
 		return evalInfixExpression(node.Operator, left, right)
+	case *ast.PipelineExpression:
+		left := EvalWithContext(node.Left, env, ctx)
+		if isError(left) {
+			return left
+		}
+		return evalPipelineExpression(left, node.Right, env, ctx)
 	case *ast.IfExpression:
-		return evalIfExpression(node, env, out)
+		return evalIfExpression(node, env, ctx)
 	case *ast.Identifier:
 		return evalIdentifier(node, env, out)
 	case *ast.FunctionLiteral:
 		return &object.Function{Parameters: node.Parameters, Body: node.Body, Env: env, Name: node.Name}
+	case *ast.ArrayLiteral:
+		elements := evalExpressions(node.Elements, env, ctx)
+		if len(elements) == 1 && isError(elements[0]) {
+			return elements[0]
+		}
+		return &object.Array{Elements: elements}
+	case *ast.MapLiteral:
+		return evalMapLiteral(node, env, ctx)
+	case *ast.IndexExpression:
+		left := EvalWithContext(node.Left, env, ctx)
+		if isError(left) {
+			return left
+		}
+		index := EvalWithContext(node.Index, env, ctx)
+		if isError(index) {
+			return index
+		}
+		return evalIndexExpression(left, index)
+	case *ast.MemberExpression:
+		obj := EvalWithContext(node.Object, env, ctx)
+		if isError(obj) {
+			return obj
+		}
+		return evalMemberExpression(obj, node.Property.Value)
+	case *ast.MatchExpression:
+		return evalMatchExpression(node, env, ctx)
 	case *ast.CallExpression:
-		fn := Eval(node.Function, env, out)
+		fn := EvalWithContext(node.Function, env, ctx)
 		if isError(fn) {
 			return fn
 		}
-		args := evalExpressions(node.Arguments, env, out)
+		args := evalExpressions(node.Arguments, env, ctx)
 		if len(args) == 1 && isError(args[0]) {
 			return args[0]
 		}
-		return applyFunction(fn, args, out)
+		return applyFunctionWithContext(fn, args, ctx)
 	}
 	return nil
 }
 
-func evalProgram(program *ast.Program, env *object.Environment, out io.Writer) object.Object {
+func evalProgram(program *ast.Program, env *object.Environment, ctx *Context) object.Object {
 	var result object.Object = nilObj
 
 	for _, statement := range program.Statements {
-		result = Eval(statement, env, out)
+		result = EvalWithContext(statement, env, ctx)
 
 		switch result := result.(type) {
 		case *object.ReturnValue:
@@ -112,11 +188,11 @@ func evalProgram(program *ast.Program, env *object.Environment, out io.Writer) o
 	return result
 }
 
-func evalBlockStatement(block *ast.BlockStatement, env *object.Environment, out io.Writer) object.Object {
+func evalBlockStatement(block *ast.BlockStatement, env *object.Environment, ctx *Context) object.Object {
 	var result object.Object = nilObj
 
 	for _, statement := range block.Statements {
-		result = Eval(statement, env, out)
+		result = EvalWithContext(statement, env, ctx)
 		if result != nil {
 			rt := result.Type()
 			if rt == object.ReturnValueObj || rt == object.ErrorObj {
@@ -273,16 +349,16 @@ func evalLogical(operator string, left, right object.Object) bool {
 	return isTruthy(left) || isTruthy(right)
 }
 
-func evalIfExpression(ie *ast.IfExpression, env *object.Environment, out io.Writer) object.Object {
-	condition := Eval(ie.Condition, env, out)
+func evalIfExpression(ie *ast.IfExpression, env *object.Environment, ctx *Context) object.Object {
+	condition := EvalWithContext(ie.Condition, env, ctx)
 	if isError(condition) {
 		return condition
 	}
 
 	if isTruthy(condition) {
-		return Eval(ie.Consequence, env, out)
+		return EvalWithContext(ie.Consequence, env, ctx)
 	} else if ie.Alternative != nil {
-		return Eval(ie.Alternative, env, out)
+		return EvalWithContext(ie.Alternative, env, ctx)
 	}
 	return nilObj
 }
@@ -299,11 +375,168 @@ func evalIdentifier(node *ast.Identifier, env *object.Environment, out io.Writer
 	return newError("identifier not found: %s", node.Value)
 }
 
-func evalExpressions(exps []ast.Expression, env *object.Environment, out io.Writer) []object.Object {
+func evalMapLiteral(node *ast.MapLiteral, env *object.Environment, ctx *Context) object.Object {
+	pairs := make(map[object.HashKey]object.MapPair)
+	for _, nodePair := range node.Pairs {
+		key := EvalWithContext(nodePair.Key, env, ctx)
+		if isError(key) {
+			return key
+		}
+		hashKey, ok := key.(object.Hashable)
+		if !ok {
+			return newError("unusable as map key: %s", key.Type())
+		}
+		value := EvalWithContext(nodePair.Value, env, ctx)
+		if isError(value) {
+			return value
+		}
+		pairs[hashKey.HashKey()] = object.MapPair{Key: key, Value: value}
+	}
+	return &object.Map{Pairs: pairs}
+}
+
+func evalIndexExpression(left, index object.Object) object.Object {
+	switch {
+	case left.Type() == object.ArrayObj && index.Type() == object.IntegerObj:
+		array := left.(*object.Array)
+		idx := index.(*object.Integer).Value
+		if idx < 0 || idx >= int64(len(array.Elements)) {
+			return nilObj
+		}
+		return array.Elements[int(idx)]
+	case left.Type() == object.MapObj:
+		key, ok := index.(object.Hashable)
+		if !ok {
+			return newError("unusable as map key: %s", index.Type())
+		}
+		pair, ok := left.(*object.Map).Pairs[key.HashKey()]
+		if !ok {
+			return nilObj
+		}
+		return pair.Value
+	case left.Type() == object.StringObj && index.Type() == object.IntegerObj:
+		s := left.(*object.String).Value
+		idx := index.(*object.Integer).Value
+		if idx < 0 || idx >= int64(len(s)) {
+			return nilObj
+		}
+		return &object.String{Value: string(s[idx])}
+	default:
+		return newError("index operator not supported: %s[%s]", left.Type(), index.Type())
+	}
+}
+
+func evalMemberExpression(obj object.Object, property string) object.Object {
+	module, ok := obj.(*object.Module)
+	if !ok {
+		return newError("member access expects module, got %s", obj.Type())
+	}
+	value, ok := module.Members[property]
+	if !ok {
+		return newError("module %q has no member %q", module.Name, property)
+	}
+	return value
+}
+
+func evalMatchExpression(node *ast.MatchExpression, env *object.Environment, ctx *Context) object.Object {
+	value := EvalWithContext(node.Value, env, ctx)
+	if isError(value) {
+		return value
+	}
+	for _, arm := range node.Arms {
+		if arm.Wildcard {
+			return EvalWithContext(arm.Value, env, ctx)
+		}
+		pattern := EvalWithContext(arm.Pattern, env, ctx)
+		if isError(pattern) {
+			return pattern
+		}
+		if objectsEqual(value, pattern) {
+			return EvalWithContext(arm.Value, env, ctx)
+		}
+	}
+	return nilObj
+}
+
+func evalPipelineExpression(left object.Object, right ast.Expression, env *object.Environment, ctx *Context) object.Object {
+	switch right := right.(type) {
+	case *ast.CallExpression:
+		fn := EvalWithContext(right.Function, env, ctx)
+		if isError(fn) {
+			return fn
+		}
+		args := []object.Object{left}
+		more := evalExpressions(right.Arguments, env, ctx)
+		if len(more) == 1 && isError(more[0]) {
+			return more[0]
+		}
+		args = append(args, more...)
+		return applyFunctionWithContext(fn, args, ctx)
+	default:
+		fn := EvalWithContext(right, env, ctx)
+		if isError(fn) {
+			return fn
+		}
+		return applyFunctionWithContext(fn, []object.Object{left}, ctx)
+	}
+}
+
+func evalImportStatement(node *ast.ImportStatement, ctx *Context) object.Object {
+	path := node.Path.Value
+	if module, ok := builtins.StdModules(ctx.Out)[path]; ok {
+		return module
+	}
+
+	fullPath := path
+	if !strings.HasSuffix(fullPath, ".rana") {
+		fullPath += ".rana"
+	}
+	if !filepath.IsAbs(fullPath) {
+		fullPath = filepath.Join(ctx.BaseDir, fullPath)
+	}
+	cleanPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		return newError("import %q failed: %v", path, err)
+	}
+	if module, ok := ctx.modules[cleanPath]; ok {
+		return module
+	}
+	if ctx.loading[cleanPath] {
+		return newError("import cycle detected at %q", path)
+	}
+	input, err := os.ReadFile(cleanPath)
+	if err != nil {
+		return newError("import %q failed: %v", path, err)
+	}
+
+	l := lexer.New(string(input))
+	p := parser.New(l)
+	program := p.ParseProgram()
+	if len(p.Errors()) != 0 {
+		return newError("import %q parser errors: %s", path, strings.Join(p.Errors(), "; "))
+	}
+
+	ctx.loading[cleanPath] = true
+	previousBase := ctx.BaseDir
+	ctx.BaseDir = filepath.Dir(cleanPath)
+	moduleEnv := object.NewEnvironment()
+	result := EvalWithContext(program, moduleEnv, ctx)
+	ctx.BaseDir = previousBase
+	delete(ctx.loading, cleanPath)
+	if isError(result) {
+		return result
+	}
+
+	module := &object.Module{Name: defaultModuleName(path), Members: moduleEnv.ExportedBindings()}
+	ctx.modules[cleanPath] = module
+	return module
+}
+
+func evalExpressions(exps []ast.Expression, env *object.Environment, ctx *Context) []object.Object {
 	result := []object.Object{}
 
 	for _, e := range exps {
-		evaluated := Eval(e, env, out)
+		evaluated := EvalWithContext(e, env, ctx)
 		if isError(evaluated) {
 			return []object.Object{evaluated}
 		}
@@ -314,6 +547,10 @@ func evalExpressions(exps []ast.Expression, env *object.Environment, out io.Writ
 }
 
 func applyFunction(fn object.Object, args []object.Object, out io.Writer) object.Object {
+	return applyFunctionWithContext(fn, args, NewContext("", out))
+}
+
+func applyFunctionWithContext(fn object.Object, args []object.Object, ctx *Context) object.Object {
 	switch fn := fn.(type) {
 	case *object.Function:
 		if len(args) != len(fn.Parameters) {
@@ -323,7 +560,7 @@ func applyFunction(fn object.Object, args []object.Object, out io.Writer) object
 		for paramIdx, param := range fn.Parameters {
 			extendedEnv.Define(param.Value, args[paramIdx], false)
 		}
-		evaluated := Eval(fn.Body, extendedEnv, out)
+		evaluated := EvalWithContext(fn.Body, extendedEnv, ctx)
 		if returnValue, ok := evaluated.(*object.ReturnValue); ok {
 			return returnValue.Value
 		}
@@ -381,9 +618,48 @@ func objectsEqual(left, right object.Object) bool {
 	case *object.String:
 		right, ok := right.(*object.String)
 		return ok && left.Value == right.Value
+	case *object.Integer:
+		right, ok := right.(*object.Integer)
+		return ok && left.Value == right.Value
+	case *object.Float:
+		right, ok := right.(*object.Float)
+		return ok && left.Value == right.Value
+	case *object.Array:
+		right, ok := right.(*object.Array)
+		if !ok || len(left.Elements) != len(right.Elements) {
+			return false
+		}
+		for i := range left.Elements {
+			if !objectsEqual(left.Elements[i], right.Elements[i]) {
+				return false
+			}
+		}
+		return true
+	case *object.Map:
+		right, ok := right.(*object.Map)
+		if !ok || len(left.Pairs) != len(right.Pairs) {
+			return false
+		}
+		for key, leftPair := range left.Pairs {
+			rightPair, ok := right.Pairs[key]
+			if !ok || !objectsEqual(leftPair.Value, rightPair.Value) {
+				return false
+			}
+		}
+		return true
 	default:
 		return left == right
 	}
+}
+
+func defaultModuleName(path string) string {
+	path = strings.TrimSuffix(path, ".rana")
+	path = filepath.Base(path)
+	path = strings.Trim(path, `"`)
+	if path == "" || path == "." {
+		return "module"
+	}
+	return path
 }
 
 func newError(format string, a ...interface{}) *object.Error {

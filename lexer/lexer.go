@@ -34,8 +34,12 @@ func (l *Lexer) NextToken() token.Token {
 		tok = l.newToken(token.Plus, l.ch)
 		l.readChar()
 	case '-':
-		tok = l.newToken(token.Minus, l.ch)
-		l.readChar()
+		if l.peekChar() == '>' {
+			tok = l.twoCharToken(token.Arrow)
+		} else {
+			tok = l.newToken(token.Minus, l.ch)
+			l.readChar()
+		}
 	case '!':
 		if l.peekChar() == '=' {
 			tok = l.twoCharToken(token.NotEq)
@@ -76,6 +80,8 @@ func (l *Lexer) NextToken() token.Token {
 	case '|':
 		if l.peekChar() == '|' {
 			tok = l.twoCharToken(token.Or)
+		} else if l.peekChar() == '>' {
+			tok = l.twoCharToken(token.Pipe)
 		} else {
 			tok = l.newToken(token.Illegal, l.ch)
 			l.readChar()
@@ -85,6 +91,12 @@ func (l *Lexer) NextToken() token.Token {
 		l.readChar()
 	case ';':
 		tok = l.newToken(token.Semicolon, l.ch)
+		l.readChar()
+	case ':':
+		tok = l.newToken(token.Colon, l.ch)
+		l.readChar()
+	case '.':
+		tok = l.newToken(token.Dot, l.ch)
 		l.readChar()
 	case '(':
 		tok = l.newToken(token.LParen, l.ch)
@@ -97,6 +109,12 @@ func (l *Lexer) NextToken() token.Token {
 		l.readChar()
 	case '}':
 		tok = l.newToken(token.RBrace, l.ch)
+		l.readChar()
+	case '[':
+		tok = l.newToken(token.LBracket, l.ch)
+		l.readChar()
+	case ']':
+		tok = l.newToken(token.RBracket, l.ch)
 		l.readChar()
 	case '"':
 		tok.Type = token.String

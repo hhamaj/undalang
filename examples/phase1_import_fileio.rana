@@ -1,0 +1,13 @@
+import "stats" as stats
+import "json" as json
+import "time" as time
+
+let values = [3, 5, 8, 13]
+let report = {
+    "created_at": time.now(),
+    "data": stats.describe(values),
+}
+
+let encoded = json.stringify(report)
+write_file("examples/report.json", encoded)
+println(read_file("examples/report.json"))

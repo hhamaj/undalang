@@ -98,6 +98,27 @@ func (rs *ReturnStatement) String() string {
 	return out.String()
 }
 
+type ImportStatement struct {
+	Token token.Token
+	Path  *StringLiteral
+	Alias *Identifier
+}
+
+func (is *ImportStatement) statementNode()       {}
+func (is *ImportStatement) TokenLiteral() string { return is.Token.Literal }
+func (is *ImportStatement) String() string {
+	var out bytes.Buffer
+	out.WriteString("import ")
+	if is.Path != nil {
+		out.WriteString(is.Path.String())
+	}
+	if is.Alias != nil {
+		out.WriteString(" as ")
+		out.WriteString(is.Alias.String())
+	}
+	return out.String()
+}
+
 type ExpressionStatement struct {
 	Token      token.Token
 	Expression Expression
@@ -204,6 +225,24 @@ type InfixExpression struct {
 	Right    Expression
 }
 
+type PipelineExpression struct {
+	Token token.Token
+	Left  Expression
+	Right Expression
+}
+
+func (pe *PipelineExpression) expressionNode()      {}
+func (pe *PipelineExpression) TokenLiteral() string { return pe.Token.Literal }
+func (pe *PipelineExpression) String() string {
+	var out bytes.Buffer
+	out.WriteString("(")
+	out.WriteString(pe.Left.String())
+	out.WriteString(" |> ")
+	out.WriteString(pe.Right.String())
+	out.WriteString(")")
+	return out.String()
+}
+
 func (ie *InfixExpression) expressionNode()      {}
 func (ie *InfixExpression) TokenLiteral() string { return ie.Token.Literal }
 func (ie *InfixExpression) String() string {
@@ -243,6 +282,105 @@ type FunctionLiteral struct {
 	Parameters []*Identifier
 	Body       *BlockStatement
 	Name       string
+}
+
+type ArrayLiteral struct {
+	Token    token.Token
+	Elements []Expression
+}
+
+func (al *ArrayLiteral) expressionNode()      {}
+func (al *ArrayLiteral) TokenLiteral() string { return al.Token.Literal }
+func (al *ArrayLiteral) String() string {
+	var out bytes.Buffer
+	elements := []string{}
+	for _, e := range al.Elements {
+		elements = append(elements, e.String())
+	}
+	out.WriteString("[")
+	out.WriteString(strings.Join(elements, ", "))
+	out.WriteString("]")
+	return out.String()
+}
+
+type MapPair struct {
+	Key   Expression
+	Value Expression
+}
+
+type MapLiteral struct {
+	Token token.Token
+	Pairs []MapPair
+}
+
+func (ml *MapLiteral) expressionNode()      {}
+func (ml *MapLiteral) TokenLiteral() string { return ml.Token.Literal }
+func (ml *MapLiteral) String() string {
+	var out bytes.Buffer
+	pairs := []string{}
+	for _, p := range ml.Pairs {
+		pairs = append(pairs, p.Key.String()+": "+p.Value.String())
+	}
+	out.WriteString("{")
+	out.WriteString(strings.Join(pairs, ", "))
+	out.WriteString("}")
+	return out.String()
+}
+
+type IndexExpression struct {
+	Token token.Token
+	Left  Expression
+	Index Expression
+}
+
+func (ie *IndexExpression) expressionNode()      {}
+func (ie *IndexExpression) TokenLiteral() string { return ie.Token.Literal }
+func (ie *IndexExpression) String() string {
+	return "(" + ie.Left.String() + "[" + ie.Index.String() + "])"
+}
+
+type MemberExpression struct {
+	Token    token.Token
+	Object   Expression
+	Property *Identifier
+}
+
+func (me *MemberExpression) expressionNode()      {}
+func (me *MemberExpression) TokenLiteral() string { return me.Token.Literal }
+func (me *MemberExpression) String() string {
+	return me.Object.String() + "." + me.Property.String()
+}
+
+type MatchArm struct {
+	Pattern  Expression
+	Wildcard bool
+	Value    Expression
+}
+
+type MatchExpression struct {
+	Token token.Token
+	Value Expression
+	Arms  []MatchArm
+}
+
+func (me *MatchExpression) expressionNode()      {}
+func (me *MatchExpression) TokenLiteral() string { return me.Token.Literal }
+func (me *MatchExpression) String() string {
+	var out bytes.Buffer
+	arms := []string{}
+	for _, a := range me.Arms {
+		pattern := "_"
+		if !a.Wildcard {
+			pattern = a.Pattern.String()
+		}
+		arms = append(arms, pattern+" -> "+a.Value.String())
+	}
+	out.WriteString("match ")
+	out.WriteString(me.Value.String())
+	out.WriteString(" { ")
+	out.WriteString(strings.Join(arms, ", "))
+	out.WriteString(" }")
+	return out.String()
 }
 
 func (fl *FunctionLiteral) expressionNode()      {}

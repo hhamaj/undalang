@@ -48,3 +48,11 @@ func (e *Environment) Assign(name string, val Object) Object {
 	}
 	return &Error{Message: fmt.Sprintf("identifier not found: %s", name)}
 }
+
+func (e *Environment) ExportedBindings() map[string]Object {
+	out := map[string]Object{}
+	for name, binding := range e.store {
+		out[name] = binding.Value
+	}
+	return out
+}
