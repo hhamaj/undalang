@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"ranalang/evaluator"
-	"ranalang/lexer"
-	"ranalang/object"
-	"ranalang/parser"
+	"undalang/evaluator"
+	"undalang/lexer"
+	"undalang/object"
+	"undalang/parser"
 )
 
 func RunFile(path string, out io.Writer, errOut io.Writer) int {
-	if !strings.HasSuffix(path, ".rana") {
-		fmt.Fprintf(errOut, "error: expected a .rana file, got %q\n", path)
+	if !strings.HasSuffix(path, ".unda") {
+		fmt.Fprintf(errOut, "error: expected a .unda file, got %q\n", path)
 		return 1
 	}
 

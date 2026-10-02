@@ -3,8 +3,8 @@ package tests
 import (
 	"testing"
 
-	"ranalang/lexer"
-	"ranalang/token"
+	"undalang/lexer"
+	"undalang/token"
 )
 
 func TestLexerTokens(t *testing.T) {

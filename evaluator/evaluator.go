@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"ranalang/ast"
-	"ranalang/builtins"
-	"ranalang/lexer"
-	"ranalang/object"
-	"ranalang/parser"
+	"undalang/ast"
+	"undalang/builtins"
+	"undalang/lexer"
+	"undalang/object"
+	"undalang/parser"
 )
 
 var (
@@ -488,8 +488,8 @@ func evalImportStatement(node *ast.ImportStatement, ctx *Context) object.Object 
 	}
 
 	fullPath := path
-	if !strings.HasSuffix(fullPath, ".rana") {
-		fullPath += ".rana"
+	if !strings.HasSuffix(fullPath, ".unda") {
+		fullPath += ".unda"
 	}
 	if !filepath.IsAbs(fullPath) {
 		fullPath = filepath.Join(ctx.BaseDir, fullPath)
@@ -653,7 +653,7 @@ func objectsEqual(left, right object.Object) bool {
 }
 
 func defaultModuleName(path string) string {
-	path = strings.TrimSuffix(path, ".rana")
+	path = strings.TrimSuffix(path, ".unda")
 	path = filepath.Base(path)
 	path = strings.Trim(path, `"`)
 	if path == "" || path == "." {

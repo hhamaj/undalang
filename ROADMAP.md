@@ -1,8 +1,8 @@
-# Ranalang Roadmap and Design Direction
+# Undalang Roadmap and Design Direction
 
 ## 1. Introduction
 
-**Ranalang** is a general-purpose programming language focused on one idea:
+**Undalang** is a general-purpose programming language focused on one idea:
 
 **Easy to start with, powerful when you need control.**
 
@@ -10,12 +10,12 @@ It should feel clean and readable for beginners, while leaving room for advanced
 
 Example beginner-style code:
 
-```rana
+```unda
 let name = "Mehmet Hamza"
 print("Hello", name)
 ```
 
-Rana is meant to begin as a practical language for:
+Unda is meant to begin as a practical language for:
 - scripts and automation
 - file/data processing
 - small CLI tools
@@ -38,7 +38,7 @@ Rana is meant to begin as a practical language for:
 
 Data-flow should stay readable:
 
-```rana
+```unda
 "hello world"
     |> split(" ")
     |> map(upper)
@@ -48,7 +48,7 @@ Data-flow should stay readable:
 
 ### Pattern matching
 
-```rana
+```unda
 match value {
     0 -> print("zero")
     1 -> print("one")
@@ -58,17 +58,17 @@ match value {
 
 ### Safe, explicit error handling
 
-Rana should favor explicit, composable error handling (Result/`?`-style propagation) rather than hidden exception-heavy flows or unsafe manual patterns.
+Unda should favor explicit, composable error handling (Result/`?`-style propagation) rather than hidden exception-heavy flows or unsafe manual patterns.
 
 ---
 
 ## 4. Implementation Language and Build Model
 
-Ranalang implementation should be written in **Go (Golang)**.
+Undalang implementation should be written in **Go (Golang)**.
 
 The first stable compiled strategy should target native executables through a **C backend**:
 
-`.rana source`  
+`.unda source`  
 `→ lexer`  
 `→ parser`  
 `→ AST`  
@@ -100,7 +100,7 @@ Deliverables:
 - scoped environment
 - core built-in functions
 - REPL
-- file execution (`rana run file.rana`)
+- file execution (`unda run file.unda`)
 
 Success criteria:
 - simple expressions/statements run correctly
@@ -110,7 +110,7 @@ Success criteria:
 ---
 
 ### Phase 1 — Practical Scripting Language
-Goal: make Rana useful for real small tools/scripts.
+Goal: make Unda useful for real small tools/scripts.
 
 Deliverables:
 - user-defined functions
@@ -143,7 +143,7 @@ Deliverables:
 - symbol resolution and scope validation
 - type checking foundations
 - C code generator
-- compiler CLI (`rana build`, `rana run`)
+- compiler CLI (`unda build`, `unda run`)
 - GCC/Clang integration for native binaries
 - source span mapping for diagnostics
 
@@ -205,11 +205,11 @@ Success criteria:
 ## 6. CLI and Tooling Direction
 
 Initial command surface:
-- `rana repl`
-- `rana run <file.rana>`
-- `rana build <file.rana> [-o output]`
-- `rana fmt <path>`
-- `rana check <file.rana>`
+- `unda repl`
+- `unda run <file.unda>`
+- `unda build <file.unda> [-o output]`
+- `unda fmt <path>`
+- `unda check <file.unda>`
 
 Tooling priorities:
 1. clear error messages with source locations
@@ -236,4 +236,4 @@ To keep scope realistic, early versions should avoid:
 - Add power incrementally, not all at once.
 - Protect beginner ergonomics while enabling expert control.
 
-Rana should evolve from a clean scripting language into a serious systems-capable language without losing its simplicity.
+Unda should evolve from a clean scripting language into a serious systems-capable language without losing its simplicity.

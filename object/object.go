@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"ranalang/ast"
+	"undalang/ast"
 )
 
 type Type string

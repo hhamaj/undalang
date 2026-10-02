@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"ranalang/repl"
-	"ranalang/runner"
+	"undalang/repl"
+	"undalang/runner"
 )
 
 func main() {
@@ -19,7 +19,7 @@ func main() {
 		repl.Start(os.Stdin, os.Stdout, os.Stderr)
 	case "run":
 		if len(os.Args) != 3 {
-			fmt.Fprintln(os.Stderr, "error: rana run expects one file")
+			fmt.Fprintln(os.Stderr, "error: unda run expects one file")
 			usage()
 			os.Exit(1)
 		}
@@ -33,6 +33,6 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
-	fmt.Fprintln(os.Stderr, "  rana repl")
-	fmt.Fprintln(os.Stderr, "  rana run path/to/file.rana")
+	fmt.Fprintln(os.Stderr, "  unda repl")
+	fmt.Fprintln(os.Stderr, "  unda run path/to/file.unda")
 }

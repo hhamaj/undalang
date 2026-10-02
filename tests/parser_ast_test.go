@@ -3,10 +3,10 @@ package tests
 import (
 	"testing"
 
-	"ranalang/ast"
-	"ranalang/lexer"
-	"ranalang/parser"
-	"ranalang/token"
+	"undalang/ast"
+	"undalang/lexer"
+	"undalang/parser"
+	"undalang/token"
 )
 
 func TestASTString(t *testing.T) {

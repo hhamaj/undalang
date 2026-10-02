@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	"ranalang/builtins"
-	"ranalang/object"
+	"undalang/builtins"
+	"undalang/object"
 )
 
 func TestEnvironmentScopesAndMutability(t *testing.T) {
@@ -42,7 +42,7 @@ func TestBuiltins(t *testing.T) {
 		t.Fatalf("print output wrong: %q", out.String())
 	}
 
-	lenObj := b["len"].Fn(&object.String{Value: "rana"})
+	lenObj := b["len"].Fn(&object.String{Value: "unda"})
 	if lenObj.(*object.Integer).Value != 4 {
 		t.Fatalf("len result wrong: %s", lenObj.Inspect())
 	}

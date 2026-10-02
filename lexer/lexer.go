@@ -1,6 +1,6 @@
 package lexer
 
-import "ranalang/token"
+import "undalang/token"
 
 type Lexer struct {
 	input        string

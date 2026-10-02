@@ -7,7 +7,7 @@ fn clean(name) {
     return name |> strings.trim |> strings.upper
 }
 
-let names = " rana, go, automation "
+let names = " unda, go, automation "
     |> strings.split(",")
     |> arrays.map(clean)
 

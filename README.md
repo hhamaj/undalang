@@ -1,29 +1,29 @@
-# ranalang
+# undalang
 
-Rana is a general-purpose language designed to feel simple and readable like Python at the start, while growing toward stronger low-level control over time.
+Unda is a general-purpose language designed to feel simple and readable like Python at the start, while growing toward stronger low-level control over time.
 
 The project roadmap and language design notes are in [ROADMAP.md](./ROADMAP.md).
 
 ## Run
 
 ```sh
-go run ./cmd/rana repl
-go run ./cmd/rana run examples/phase1_data_pipeline.rana
+go run ./cmd/unda repl
+go run ./cmd/unda run examples/phase1_data_pipeline.unda
 ```
 
 ## Current Syntax
 
 Variables are immutable by default. Use `let mut` when a binding must be reassigned.
 
-```rana
-let name = "rana"
+```unda
+let name = "unda"
 let mut count = 1
 count = count + 1
 ```
 
 Functions can be anonymous or named. Named functions are bindings in the current scope.
 
-```rana
+```unda
 fn add(a, b) {
     return a + b
 }
@@ -31,11 +31,11 @@ fn add(a, b) {
 let double = fn(x) { return x * 2 }
 ```
 
-Rana supports arrays, maps, indexing, `if`, and `match`.
+Unda supports arrays, maps, indexing, `if`, and `match`.
 
-```rana
+```unda
 let xs = [1, 2, 3]
-let data = {"name": "rana", "count": len(xs)}
+let data = {"name": "unda", "count": len(xs)}
 
 match data["count"] {
     0 -> "empty",
@@ -46,13 +46,13 @@ match data["count"] {
 
 The pipeline operator calls the expression on the right with the left value inserted as the first argument. If the right side is a bare function, it is called with one argument.
 
-```rana
+```unda
 import "strings" as strings
 import "arrays" as arrays
 
 fn shout(s) { return s |> strings.upper }
 
-"rana,go"
+"unda,go"
     |> strings.split(",")
     |> arrays.map(shout)
     |> strings.join("-")
@@ -61,18 +61,18 @@ fn shout(s) { return s |> strings.upper }
 
 ## Modules
 
-Use `import "module" as name` for standard modules or local `.rana` files. Local imports are resolved relative to the file being run; the `.rana` suffix is optional.
+Use `import "module" as name` for standard modules or local `.unda` files. Local imports are resolved relative to the file being run; the `.unda` suffix is optional.
 
-```rana
+```unda
 import "json" as json
 import "stats" as stats
 
 println(json.stringify(stats.describe([1, 2, 3])))
 ```
 
-Imported Rana files expose their top-level bindings through member access:
+Imported Unda files expose their top-level bindings through member access:
 
-```rana
+```unda
 import "stats" as stats
 stats.sum([1, 2, 3])
 ```
@@ -99,7 +99,7 @@ Standard modules:
 
 ## Examples
 
-- `examples/phase0.rana`: foundation syntax
-- `examples/mutability.rana`: mutable and immutable bindings
-- `examples/phase1_data_pipeline.rana`: arrays, maps, match, pipeline, JSON
-- `examples/phase1_import_fileio.rana`: local module import and file I/O
+- `examples/phase0.unda`: foundation syntax
+- `examples/mutability.unda`: mutable and immutable bindings
+- `examples/phase1_data_pipeline.unda`: arrays, maps, match, pipeline, JSON
+- `examples/phase1_import_fileio.unda`: local module import and file I/O

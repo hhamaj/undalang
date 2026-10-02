@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"testing"
 
-	"ranalang/evaluator"
-	"ranalang/lexer"
-	"ranalang/object"
-	"ranalang/parser"
+	"undalang/evaluator"
+	"undalang/lexer"
+	"undalang/object"
+	"undalang/parser"
 )
 
 func TestEvalExpressions(t *testing.T) {
@@ -20,7 +20,7 @@ func TestEvalExpressions(t *testing.T) {
 	}{
 		{"5", int64(5)},
 		{"5.5", 5.5},
-		{`"hello" + " " + "rana"`, "hello rana"},
+		{`"hello" + " " + "unda"`, "hello unda"},
 		{"true == !false", true},
 		{"1 + 2 * 3 == 7", true},
 		{"10 / 2 + 3", int64(8)},
@@ -84,7 +84,7 @@ import "arrays" as arrays
 
 fn bang(s) { return s + "!" }
 
-let names = "rana,go" |> strings.split(",") |> arrays.map(bang)
+let names = "unda,go" |> strings.split(",") |> arrays.map(bang)
 let data = {"first": names[0], "count": len(names)}
 match data["count"] {
     2 -> data["first"],
@@ -92,24 +92,24 @@ match data["count"] {
 }`
 
 	evaluated, _ := testEval(t, input)
-	testExpectedObject(t, evaluated, "rana!")
+	testExpectedObject(t, evaluated, "unda!")
 }
 
 func TestEvalMapUtilitiesAndJSON(t *testing.T) {
 	input := `import "json" as json
 import "maps" as maps
 
-let parsed = json.parse("{\"name\":\"rana\",\"items\":[1,2]}")
+let parsed = json.parse("{\"name\":\"unda\",\"items\":[1,2]}")
 let updated = maps.set(parsed, "ok", true)
 json.stringify({"name": updated["name"], "ok": maps.has(updated, "ok"), "second": updated["items"][1]})`
 
 	evaluated, _ := testEval(t, input)
-	testExpectedObject(t, evaluated, `{"name":"rana","ok":true,"second":2}`)
+	testExpectedObject(t, evaluated, `{"name":"unda","ok":true,"second":2}`)
 }
 
 func TestEvalLocalImportAndFileIO(t *testing.T) {
 	dir := t.TempDir()
-	modulePath := filepath.Join(dir, "util.rana")
+	modulePath := filepath.Join(dir, "util.unda")
 	if err := os.WriteFile(modulePath, []byte(`fn greet(name) { return "hi " + name }
 let version = 1`), 0644); err != nil {
 		t.Fatal(err)
@@ -117,11 +117,11 @@ let version = 1`), 0644); err != nil {
 	dataPath := filepath.Join(dir, "out.txt")
 
 	input := `import "util" as util
-write_file(` + strconv.Quote(dataPath) + `, util.greet("rana"))
+write_file(` + strconv.Quote(dataPath) + `, util.greet("unda"))
 read_file(` + strconv.Quote(dataPath) + `) + ":" + type(util.version)`
 
 	evaluated, _ := testEvalInDir(t, input, dir)
-	testExpectedObject(t, evaluated, "hi rana:integer")
+	testExpectedObject(t, evaluated, "hi unda:integer")
 }
 
 func TestEvalPhase1RuntimeErrors(t *testing.T) {

@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"io"
 
-	"ranalang/evaluator"
-	"ranalang/lexer"
-	"ranalang/object"
-	"ranalang/parser"
+	"undalang/evaluator"
+	"undalang/lexer"
+	"undalang/object"
+	"undalang/parser"
 )
 
-const Prompt = "rana> "
+const Prompt = "unda> "
 
 func Start(in io.Reader, out io.Writer, errOut io.Writer) {
 	scanner := bufio.NewScanner(in)
