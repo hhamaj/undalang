@@ -3,9 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"undalang/diag"
 	"undalang/repl"
 	"undalang/runner"
+	"undalang/semantic"
 )
 
 func main() {
@@ -18,12 +21,9 @@ func main() {
 	case "repl":
 		repl.Start(os.Stdin, os.Stdout, os.Stderr)
 	case "run":
-		if len(os.Args) != 3 {
-			fmt.Fprintln(os.Stderr, "error: unda run expects one file")
-			usage()
-			os.Exit(1)
-		}
-		os.Exit(runner.RunFile(os.Args[2], os.Stdout, os.Stderr))
+		os.Exit(runCmd(os.Args[2:]))
+	case "check":
+		os.Exit(checkCmd(os.Args[2:]))
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown command %q\n", os.Args[1])
 		usage()
@@ -35,4 +35,90 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  unda repl")
 	fmt.Fprintln(os.Stderr, "  unda run path/to/file.unda")
+	fmt.Fprintln(os.Stderr, "  unda check [--native] path/to/file.unda")
+}
+
+// parseArgs separates flags from positional arguments so flags may appear
+// anywhere. valueFlags lists flags that take a value.
+func parseArgs(args []string, valueFlags, boolFlags []string) (map[string]string, []string, error) {
+	flags := map[string]string{}
+	var positional []string
+	isIn := func(list []string, s string) bool {
+		for _, v := range list {
+			if v == s {
+				return true
+			}
+		}
+		return false
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positional = append(positional, arg)
+			continue
+		}
+		name, value, hasValue := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		switch {
+		case isIn(boolFlags, name):
+			flags[name] = "true"
+		case isIn(valueFlags, name):
+			if !hasValue {
+				if i+1 >= len(args) {
+					return nil, nil, fmt.Errorf("flag %s needs a value", arg)
+				}
+				i++
+				value = args[i]
+			}
+			flags[name] = value
+		default:
+			return nil, nil, fmt.Errorf("unknown flag %s", arg)
+		}
+	}
+	return flags, positional, nil
+}
+
+func singleFile(cmd string, args []string, valueFlags, boolFlags []string) (map[string]string, string, bool) {
+	flags, files, err := parseArgs(args, valueFlags, boolFlags)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		usage()
+		return nil, "", false
+	}
+	if len(files) != 1 {
+		fmt.Fprintf(os.Stderr, "error: unda %s expects one file\n", cmd)
+		usage()
+		return nil, "", false
+	}
+	if !strings.HasSuffix(files[0], ".unda") {
+		fmt.Fprintf(os.Stderr, "error: expected a .unda file, got %q\n", files[0])
+		return nil, "", false
+	}
+	return flags, files[0], true
+}
+
+func runCmd(args []string) int {
+	_, file, ok := singleFile("run", args, nil, nil)
+	if !ok {
+		return 1
+	}
+	return runner.RunFile(file, os.Stdout, os.Stderr)
+}
+
+func checkCmd(args []string) int {
+	flags, file, ok := singleFile("check", args, nil, []string{"native"})
+	if !ok {
+		return 1
+	}
+	prog := semantic.AnalyzeFile(file, semantic.Options{Native: flags["native"] != ""})
+	if prog.HasErrors() {
+		printDiagnostics(prog)
+		return 1
+	}
+	return 0
+}
+
+func printDiagnostics(prog *semantic.Program) {
+	for _, d := range prog.Diagnostics {
+		fmt.Fprint(os.Stderr, diag.Format(d, prog.Source(d.File)))
+	}
 }

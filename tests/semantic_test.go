@@ -1,0 +1,196 @@
+package tests
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"undalang/builtins"
+	"undalang/diag"
+	"undalang/object"
+	"undalang/semantic"
+)
+
+func analyze(t *testing.T, src string, opts semantic.Options) []string {
+	t.Helper()
+	prog := semantic.AnalyzeSource(src, "", t.TempDir(), opts)
+	out := make([]string, 0, len(prog.Diagnostics))
+	for _, d := range prog.Diagnostics {
+		out = append(out, fmt.Sprintf("%d:%d %s", d.Line, d.Column, d.Message))
+	}
+	return out
+}
+
+func TestSemanticReportsErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"undefined", "let a = 1\nprintln(b)", []string{"2:9 identifier not found: b"}},
+		{"use before let", "println(x)\nlet x = 1", []string{"1:9 identifier not found: x"}},
+		{"immutable assign", "let x = 1\nx = 2", []string{`2:1 cannot assign to immutable binding "x"`}},
+		{"assign undefined", "y = 2", []string{"1:1 identifier not found: y"}},
+		{"type mismatch", `let n = 1 + "a"`, []string{"1:11 type mismatch: INTEGER + STRING"}},
+		{"string op", `"a" - "b"`, []string{"1:5 unknown operator: STRING - STRING"}},
+		{"float modulo", "1.5 % 2", []string{"1:5 operator % only supports integers"}},
+		{"negate string", `-"a"`, []string{"1:1 unknown operator: -STRING"}},
+		{"not a function", "let x = 5\nx()", []string{"2:1 not a function: INTEGER"}},
+		{"user arity", "fn add(a, b) { a + b }\nadd(1)", []string{"2:1 wrong number of arguments: expected 2, got 1"}},
+		{"builtin arity", "len(1, 2)", []string{"1:1 len expects 1 argument, got 2"}},
+		{"builtin arg type", `import "strings" as s
+s.upper(5)`, []string{"2:3 strings.upper argument 1 must be STRING, got INTEGER"}},
+		{"pipeline arity", `import "strings" as s
+"a" |> s.split`, []string{"2:5 strings.split expects 2 arguments, got 1"}},
+		{"unknown member", `import "strings" as s
+s.missing`, []string{`2:2 module "strings" has no member "missing"`}},
+		{"member on map", "let m = {}\nm.x", []string{"2:2 member access expects module, got MAP"}},
+		{"bad map key", "{[1]: 2}", []string{"1:1 unusable as map key: ARRAY"}},
+		{"bad index", `[1]["a"]`, []string{"1:4 index operator not supported: ARRAY[STRING]"}},
+		{"return type flows", "fn f() { return 1 }\nlet s = len(\"ab\") + \"x\"", []string{"2:19 type mismatch: INTEGER + STRING"}},
+		{"inside function", "fn f() { return nope }", []string{"1:17 identifier not found: nope"}},
+		{"several", "a\nb", []string{"1:1 identifier not found: a", "2:1 identifier not found: b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := analyze(t, tt.src, semantic.Options{})
+			if strings.Join(got, "\n") != strings.Join(tt.want, "\n") {
+				t.Fatalf("diagnostics mismatch\ngot:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
+			}
+		})
+	}
+}
+
+func TestSemanticAcceptsDynamicCode(t *testing.T) {
+	tests := map[string]string{
+		"forward reference": "fn a() { b() }\nfn b() { 1 }\na()",
+		"mutable rebinding": "let mut x = 1\nx = \"now a string\"\nx + \"!\"",
+		"redeclare":         "let x = 1\nlet x = \"s\"\nx + \"t\"",
+		"unknown params":    "fn f(a, b) { a + b }\nf(1, 2)\nf(\"a\", \"b\")",
+		"closure assign":    "let mut n = 0\nlet inc = fn() { n = n + 1 }\ninc()",
+		"builtin shadow":    "let len = fn(a, b) { a }\nlen(1, 2)",
+		"mixed numbers":     "1 + 2.5 == 3.5",
+		"logical ops":       "true && 1\nnil || \"x\"",
+		"param shadows":     "fn f(x) { let x = x + 1\nx }",
+		"match and if":      "let v = match 1 { 1 -> \"a\", _ -> 2 }\nif v { 1 } else { 2 }",
+	}
+	for name, src := range tests {
+		t.Run(name, func(t *testing.T) {
+			if got := analyze(t, src, semantic.Options{}); len(got) != 0 {
+				t.Fatalf("unexpected diagnostics: %v", got)
+			}
+		})
+	}
+}
+
+func TestSemanticNativeOnlyChecks(t *testing.T) {
+	src := "import \"time\" as time\ntime.format(time.now(), \"2006\")"
+	if got := analyze(t, src, semantic.Options{}); len(got) != 0 {
+		t.Fatalf("interpreter mode should accept time.format, got %v", got)
+	}
+	got := analyze(t, src, semantic.Options{Native: true})
+	want := "2:5 time.format is not supported by the C backend yet"
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("got %v, want %q", got, want)
+	}
+}
+
+func TestSemanticImports(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lib.unda"), []byte("fn two(a, b) { a }\nlet n = 1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cycle_a.unda"), []byte(`import "cycle_b" as b`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "cycle_b.unda"), []byte(`import "cycle_a" as a`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	src := "import \"lib\" as lib\nlib.two(1)\nlib.nope\nimport \"missing\" as m"
+	prog := semantic.AnalyzeSource(src, "", dir, semantic.Options{})
+	var got []string
+	for _, d := range prog.Diagnostics {
+		got = append(got, fmt.Sprintf("%d:%d %s", d.Line, d.Column, d.Message))
+	}
+	if len(got) != 3 ||
+		got[0] != "2:5 wrong number of arguments: expected 2, got 1" ||
+		got[1] != `3:4 module "lib" has no member "nope"` ||
+		!strings.HasPrefix(got[2], `4:1 import "missing" failed:`) {
+		t.Fatalf("unexpected diagnostics: %q", got)
+	}
+
+	prog = semantic.AnalyzeFile(filepath.Join(dir, "cycle_a.unda"), semantic.Options{})
+	if len(prog.Diagnostics) != 1 || prog.Diagnostics[0].Message != `import cycle detected at "cycle_a"` {
+		t.Fatalf("expected cycle diagnostic, got %v", prog.Diagnostics)
+	}
+}
+
+// The signature table must cover exactly the builtins the interpreter has.
+func TestSemanticSignaturesMatchBuiltins(t *testing.T) {
+	for name := range builtins.New(nil) {
+		if _, ok := semantic.GlobalBuiltins[name]; !ok {
+			t.Errorf("global builtin %s has no signature", name)
+		}
+	}
+	if len(builtins.New(nil)) != len(semantic.GlobalBuiltins) {
+		t.Errorf("signature table has extra globals")
+	}
+	apply := func(object.Object, []object.Object) object.Object { return nil }
+	for modName, mod := range builtins.StdModules(apply) {
+		sigs, ok := semantic.StdModules[modName]
+		if !ok {
+			t.Errorf("std module %s has no signatures", modName)
+			continue
+		}
+		for member := range mod.Members {
+			if _, ok := sigs[member]; !ok {
+				t.Errorf("%s.%s has no signature", modName, member)
+			}
+		}
+		if len(sigs) != len(mod.Members) {
+			t.Errorf("signature table for %s has extra members", modName)
+		}
+	}
+}
+
+func TestDiagnosticFormat(t *testing.T) {
+	d := diag.Diagnostic{File: "main.unda", Line: 2, Column: 9, Message: "identifier not found: y"}
+	got := diag.Format(d, "let x = 1\nlet z = y + 1\n")
+	want := "main.unda:2:9: error: identifier not found: y\n  2 | let z = y + 1\n    |         ^\n"
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestRuntimeErrorsCarryPosition(t *testing.T) {
+	evaluated, _ := testEval(t, "let a = 1\nlet b = a + true")
+	errObj, ok := evaluated.(*object.Error)
+	if !ok {
+		t.Fatalf("expected error, got %T", evaluated)
+	}
+	if errObj.Line != 2 || errObj.Column != 11 {
+		t.Fatalf("wrong position %d:%d", errObj.Line, errObj.Column)
+	}
+	if errObj.Inspect() != "runtime error: line 2:11: type mismatch: INTEGER + BOOLEAN" {
+		t.Fatalf("wrong message %q", errObj.Inspect())
+	}
+}
+
+func TestEvalTruthinessOfBuiltinResults(t *testing.T) {
+	evaluated, _ := testEval(t, `import "strings" as strings
+if strings.contains("a", "b") { "truthy" } else { "falsy" }`)
+	testExpectedObject(t, evaluated, "falsy")
+	evaluated, _ = testEval(t, `import "strings" as strings
+!strings.contains("a", "b")`)
+	testExpectedObject(t, evaluated, true)
+}
+
+func TestEvalCallDepthLimit(t *testing.T) {
+	evaluated, _ := testEval(t, "fn f(n) { f(n + 1) }\nf(0)")
+	errObj, ok := evaluated.(*object.Error)
+	if !ok || errObj.Message != "maximum call depth exceeded" {
+		t.Fatalf("expected depth error, got %s", evaluated.Inspect())
+	}
+}
