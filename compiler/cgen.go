@@ -47,6 +47,18 @@ func GenerateC(prog *semantic.Program) (string, error) {
 	out.WriteString(g.decls.String())
 	out.WriteString("\n")
 	out.WriteString(g.defs.String())
+	// Static storage that can hold heap values is a GC root.
+	out.WriteString("static void u_register_roots(void) {\n")
+	for _, mod := range prog.Modules {
+		fmt.Fprintf(&out, "    u_gc_add_root(mod_%d_slots, sizeof mod_%d_slots);\n", mod.ID, mod.ID)
+		if mod != prog.Main {
+			fmt.Fprintf(&out, "    u_gc_add_root(&mod_%d_value, sizeof mod_%d_value);\n", mod.ID, mod.ID)
+		}
+	}
+	for _, name := range sortedSet(g.builtins) {
+		fmt.Fprintf(&out, "    u_gc_add_root(&g_builtin_%s, sizeof g_builtin_%s);\n", name, name)
+	}
+	out.WriteString("}\n")
 	fmt.Fprintf(&out, "static UValue u_program_main(void) {\n    return mod_%d_body();\n}\n", prog.Main.ID)
 	return out.String(), nil
 }
@@ -92,14 +104,13 @@ func (g *gen) module(mod *semantic.Module) {
 			slotsExpr = fmt.Sprintf("mod_%d_slotidx", mod.ID)
 		}
 		fmt.Fprintf(&g.decls, "static UValue mod_%d_init(void);\n", mod.ID)
+		fmt.Fprintf(&g.decls, "static bool mod_%d_done;\nstatic UValue mod_%d_value;\n", mod.ID, mod.ID)
 		fmt.Fprintf(&g.defs, `static UValue mod_%[1]d_init(void) {
-    static bool done = false;
-    static UValue value;
-    if (done) return value;
-    done = true;
+    if (mod_%[1]d_done) return mod_%[1]d_value;
+    mod_%[1]d_done = true;
     mod_%[1]d_body();
-    value = u_module_from_frame(%[2]s, %[3]d, %[4]s, %[5]s, &mod_%[1]d_frame);
-    return value;
+    mod_%[1]d_value = u_module_from_frame(%[2]s, %[3]d, %[4]s, %[5]s, &mod_%[1]d_frame);
+    return mod_%[1]d_value;
 }
 
 `, mod.ID, cString(mod.Name), len(names), namesExpr, slotsExpr)

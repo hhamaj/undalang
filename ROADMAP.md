@@ -143,7 +143,9 @@ Status:
 - `compiler` package: C code generator plus an embedded C runtime (`unda build`, `unda run --native`)
 - `diag` package: `file:line:col` diagnostics with source excerpts; runtime errors carry positions in both backends
 - differential tests keep the interpreter and native output identical
-- open items: garbage collection, `time.format` in the C runtime
+- conservative mark-and-sweep garbage collector in the C runtime
+- before phase 3: `//` comments, `while`/`for` loops with `break`/`continue`, destructuring `match` patterns with guards, character-based strings
+- open items: `time.format` in the C runtime
 
 Deliverables:
 - semantic analysis pass

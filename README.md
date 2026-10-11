@@ -36,10 +36,11 @@ runtime error: main.unda:6:20: type mismatch: INTEGER + STRING
 
 `unda build` lowers the program to C and compiles it with the system C compiler. The native executable behaves like the interpreter: same output formatting, same error messages and locations, and the same standard library. The test suite enforces this by running every program through both backends and comparing stdout, stderr, and the exit code.
 
+Native executables free unused memory with a conservative mark-and-sweep garbage collector. It runs once the program has allocated more than its live heap (at least 8 MiB); set `UNDA_GC_THRESHOLD=<bytes>` to change the minimum.
+
 Current limitations:
 
 - `time.format` is not available natively yet (`unda build` reports it at compile time).
-- Memory is never freed during a run; there is no garbage collector yet.
 - `process.args()` returns the executable's own arguments.
 - Recursion is limited to 10000 nested calls in both backends.
 
@@ -63,7 +64,9 @@ fn add(a, b) {
 let double = fn(x) { return x * 2 }
 ```
 
-Unda supports arrays, maps, indexing, `if`, and `match`.
+Comments start with `//` and run to the end of the line.
+
+Unda supports arrays, maps, indexing, `if`, and `match`. Strings are indexed by character: `len("çay")` is 3 and `"çay"[0]` is `"ç"`.
 
 ```unda
 let xs = [1, 2, 3]
@@ -73,6 +76,38 @@ match data["count"] {
     0 -> "empty",
     3 -> data["name"],
     _ -> "other",
+}
+```
+
+`match` arms take patterns. A bare name binds the value, `[first, ..rest]` destructures arrays, `{"key": value}` destructures maps (extra keys are allowed), and `if` adds a guard. Literals compare by value; to compare against a variable, use a guard such as `x if x == limit`.
+
+```unda
+fn describe(v) {
+    match v {
+        [] -> "empty",
+        [first, ..rest] -> "starts with " + type(first),
+        {"name": name} -> name,
+        n if type(n) == "integer" && n < 0 -> "negative",
+        _ -> "other",
+    }
+}
+```
+
+## Loops
+
+`while` repeats while its condition is truthy. `for` iterates arrays (elements), maps (keys in sorted order) and strings (characters); with two names it also binds the index or key. `break` and `continue` work in both. Each iteration gets fresh bindings, so closures created in a loop capture that iteration's values.
+
+```unda
+let mut i = 0
+while i < 3 {
+    i = i + 1
+}
+
+for name in ["ada", "bo"] { println(name) }
+for i, name in ["ada", "bo"] { println(i, name) }
+for key, value in {"a": 1, "b": 2} {
+    if value == 2 { break }
+    println(key, value)
 }
 ```
 
@@ -114,7 +149,7 @@ stats.sum([1, 2, 3])
 Global builtins:
 
 - `print(...)`, `println(...)`
-- `len(value)` for strings, arrays, and maps
+- `len(value)` for strings (characters), arrays, and maps
 - `type(value)`
 - `read_file(path)`, `write_file(path, content)`, `append_file(path, content)`
 

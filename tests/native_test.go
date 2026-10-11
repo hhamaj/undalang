@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"undalang/compiler"
@@ -324,6 +326,57 @@ func TestNativeExamples(t *testing.T) {
 	}
 }
 
+// gcStressThreshold makes native test binaries collect every few KiB;
+// set UNDA_TEST_GC_THRESHOLD=1 to collect on every allocation.
+var gcStressThreshold = func() string {
+	if v := os.Getenv("UNDA_TEST_GC_THRESHOLD"); v != "" {
+		return v
+	}
+	return "4096"
+}()
+
+// A loop that allocates far more than it keeps must run in bounded memory.
+func TestNativeGarbageCollection(t *testing.T) {
+	cc := requireCC(t)
+	if runtime.GOOS != "linux" {
+		t.Skip("max RSS check needs Linux")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "churn.unda")
+	src := `import "arrays" as arrays
+let mut kept = []
+let mut i = 0
+while i < 2000000 {
+    let tmp = {"n": i, "s": "value-" + "x", "list": [i, i + 1]}
+    if i % 100000 == 0 { kept = arrays.append(kept, tmp) }
+    i = i + 1
+}
+println(len(kept), kept[19]["n"], kept[19]["list"])
+`
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(dir, "churn")
+	if err := compiler.Build(path, compiler.Options{Output: exe, CC: cc}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(exe)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "20 1900000 [1900000, 1900001]\n" {
+		t.Fatalf("wrong output %q", out)
+	}
+	usage, ok := cmd.ProcessState.SysUsage().(*syscall.Rusage)
+	if !ok {
+		t.Skip("no rusage")
+	}
+	if maxRSSKB := usage.Maxrss; maxRSSKB > 100*1024 {
+		t.Fatalf("max RSS %d KB; garbage is not being collected", maxRSSKB)
+	}
+}
+
 func requireCC(t *testing.T) string {
 	t.Helper()
 	cc := os.Getenv("CC")
@@ -356,6 +409,8 @@ func compareBackends(t *testing.T, cc, path string) {
 		t.Fatalf("build failed: %v", err)
 	}
 	cmd := exec.Command(exe)
+	// Collect very often so a missed GC root shows up as a mismatch.
+	cmd.Env = append(os.Environ(), "UNDA_GC_THRESHOLD="+gcStressThreshold)
 	var nout, nerr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &nout, &nerr
 	ncode := 0

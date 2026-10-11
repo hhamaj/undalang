@@ -4,8 +4,8 @@
  *
  * Semantics (operators, error messages, value formatting) mirror the Go
  * interpreter exactly; the differential tests in tests/native_test.go rely
- * on that. Memory is never freed yet: values are heap allocated and live
- * until the process exits.
+ * on that. Unda values live on a garbage-collected heap (see the
+ * "garbage collector" section); temporary C buffers use plain malloc.
  */
 #define _GNU_SOURCE
 #pragma GCC diagnostic ignored "-Wunused-function"
@@ -13,6 +13,7 @@
 #include <fcntl.h>
 #include <math.h>
 #include <pthread.h>
+#include <setjmp.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -73,16 +74,166 @@ static void u_panic(const char *fmt, ...) {
     exit(1);
 }
 
-static void *u_alloc(size_t n) {
+static void u_oom(void) __attribute__((noreturn));
+static void u_oom(void) {
+    fflush(stdout);
+    fputs("runtime error: out of memory\n", stderr);
+    exit(1);
+}
+
+/* Plain allocations for temporary C buffers that are released with free(). */
+static void *u_xalloc(size_t n) {
     void *p = calloc(1, n ? n : 1);
-    if (!p) { fputs("runtime error: out of memory\n", stderr); exit(1); }
+    if (!p) u_oom();
     return p;
 }
 
-static void *u_realloc(void *p, size_t n) {
+static void *u_xrealloc(void *p, size_t n) {
     p = realloc(p, n ? n : 1);
-    if (!p) { fputs("runtime error: out of memory\n", stderr); exit(1); }
+    if (!p) u_oom();
     return p;
+}
+
+/* ---------- garbage collector ----------
+ *
+ * A conservative mark-and-sweep collector. Every Unda value is allocated
+ * with u_alloc, which records the block in a table. A collection marks
+ * blocks reachable from the roots, treating every aligned word as a
+ * potential pointer (including pointers into the middle of a block):
+ *   - the Unda thread's stack, with callee-saved registers spilled onto it,
+ *   - static slots registered by the generated code (u_register_roots).
+ * Unmarked blocks are freed. A collection runs once the bytes allocated
+ * since the last one exceed the live heap size (minimum 8 MiB, tunable with
+ * UNDA_GC_THRESHOLD).
+ */
+
+typedef struct { size_t size; size_t mark; } UGcHeader;
+#define U_GC_HDR sizeof(UGcHeader)
+#define U_GC_HEADER(p) ((UGcHeader *)((char *)(p) - U_GC_HDR))
+
+typedef struct { char *start; size_t size; } UGcRoot;
+
+static char **u_gc_blocks = NULL;
+static size_t u_gc_count = 0, u_gc_cap = 0;
+static char **u_gc_work = NULL;
+static size_t u_gc_work_len = 0, u_gc_work_cap = 0;
+static UGcRoot *u_gc_roots = NULL;
+static size_t u_gc_root_count = 0;
+static size_t u_gc_allocated = 0, u_gc_threshold = (size_t)8 << 20, u_gc_min = (size_t)8 << 20;
+static char *u_stack_hi = NULL;
+static bool u_gc_enabled = false;
+static size_t u_gc_collections = 0;
+
+static void u_gc_add_root(void *start, size_t size) {
+    u_gc_roots = u_xrealloc(u_gc_roots, (u_gc_root_count + 1) * sizeof(UGcRoot));
+    u_gc_roots[u_gc_root_count].start = start;
+    u_gc_roots[u_gc_root_count].size = size;
+    u_gc_root_count++;
+}
+
+static int u_gc_cmp(const void *a, const void *b) {
+    uintptr_t x = (uintptr_t)*(char *const *)a, y = (uintptr_t)*(char *const *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* Returns the block containing address w (blocks must be sorted). */
+static char *u_gc_find(uintptr_t w) {
+    if (u_gc_count == 0 || w < (uintptr_t)u_gc_blocks[0]) return NULL;
+    size_t lo = 0, hi = u_gc_count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if ((uintptr_t)u_gc_blocks[mid] <= w) lo = mid + 1;
+        else hi = mid;
+    }
+    char *b = u_gc_blocks[lo - 1];
+    return w <= (uintptr_t)b + U_GC_HEADER(b)->size ? b : NULL;
+}
+
+static void u_gc_mark_range(const char *lo, const char *hi) {
+    uintptr_t a = ((uintptr_t)lo + sizeof(void *) - 1) & ~(uintptr_t)(sizeof(void *) - 1);
+    for (; a + sizeof(void *) <= (uintptr_t)hi; a += sizeof(void *)) {
+        char *b = u_gc_find(*(const uintptr_t *)a);
+        if (!b || U_GC_HEADER(b)->mark) continue;
+        U_GC_HEADER(b)->mark = 1;
+        if (u_gc_work_len == u_gc_work_cap) {
+            u_gc_work_cap = u_gc_work_cap ? u_gc_work_cap * 2 : 1024;
+            u_gc_work = u_xrealloc(u_gc_work, u_gc_work_cap * sizeof(char *));
+        }
+        u_gc_work[u_gc_work_len++] = b;
+    }
+}
+
+static void u_gc_drain(void) {
+    while (u_gc_work_len > 0) {
+        char *b = u_gc_work[--u_gc_work_len];
+        u_gc_mark_range(b, b + U_GC_HEADER(b)->size);
+    }
+}
+
+__attribute__((noinline)) static void u_gc_scan_stack(void) {
+    volatile char here = 0;
+    u_gc_mark_range((const char *)&here, u_stack_hi);
+    u_gc_drain();
+}
+
+__attribute__((noinline)) static void u_gc_collect(void) {
+    /* Spill callee-saved registers so the stack scan sees them. */
+    __builtin_unwind_init();
+    jmp_buf regs;
+    setjmp(regs);
+    qsort(u_gc_blocks, u_gc_count, sizeof(char *), u_gc_cmp);
+    u_gc_scan_stack();
+    for (size_t i = 0; i < u_gc_root_count; i++) {
+        u_gc_mark_range(u_gc_roots[i].start, u_gc_roots[i].start + u_gc_roots[i].size);
+        u_gc_drain();
+    }
+    size_t kept = 0, live = 0;
+    for (size_t i = 0; i < u_gc_count; i++) {
+        char *b = u_gc_blocks[i];
+        UGcHeader *h = U_GC_HEADER(b);
+        if (h->mark) {
+            h->mark = 0;
+            live += h->size + U_GC_HDR;
+            u_gc_blocks[kept++] = b;
+        } else {
+            free(h);
+        }
+    }
+    u_gc_count = kept;
+    u_gc_allocated = 0;
+    u_gc_threshold = live > u_gc_min ? live : u_gc_min;
+    u_gc_collections++;
+}
+
+static void *u_alloc(size_t n) {
+    size_t size = (n + sizeof(void *) - 1) & ~(sizeof(void *) - 1);
+    if (size == 0) size = sizeof(void *);
+    if (u_gc_enabled && u_gc_allocated >= u_gc_threshold) u_gc_collect();
+    UGcHeader *h = calloc(1, U_GC_HDR + size);
+    if (!h && u_gc_enabled) {
+        u_gc_collect();
+        h = calloc(1, U_GC_HDR + size);
+    }
+    if (!h) u_oom();
+    h->size = size;
+    if (u_gc_count == u_gc_cap) {
+        u_gc_cap = u_gc_cap ? u_gc_cap * 2 : 4096;
+        u_gc_blocks = u_xrealloc(u_gc_blocks, u_gc_cap * sizeof(char *));
+    }
+    char *p = (char *)h + U_GC_HDR;
+    u_gc_blocks[u_gc_count++] = p;
+    u_gc_allocated += size + U_GC_HDR;
+    return p;
+}
+
+/* Grows a GC block; the old block becomes garbage. */
+static void *u_realloc(void *p, size_t n) {
+    if (!p) return u_alloc(n);
+    size_t old = U_GC_HEADER(p)->size;
+    if (n <= old) return p;
+    void *q = u_alloc(n);
+    memcpy(q, p, old);
+    return q;
 }
 
 /* ---------- string builder ---------- */
@@ -93,7 +244,7 @@ static void sb_grow(USb *sb, size_t extra) {
     if (sb->len + extra + 1 <= sb->cap) return;
     size_t cap = sb->cap ? sb->cap * 2 : 64;
     while (cap < sb->len + extra + 1) cap *= 2;
-    sb->buf = u_realloc(sb->buf, cap);
+    sb->buf = u_xrealloc(sb->buf, cap);
     sb->cap = cap;
 }
 static void sb_putn(USb *sb, const char *s, size_t n) {
@@ -327,7 +478,7 @@ static void u_inspect_to(USb *sb, UValue v) {
         break;
     case U_MAP: {
         UMap *m = v.as.m;
-        USb *parts = u_alloc((m->len ? m->len : 1) * sizeof(USb));
+        USb *parts = u_xalloc((m->len ? m->len : 1) * sizeof(USb));
         for (size_t i = 0; i < m->len; i++) {
             u_inspect_to(&parts[i], m->entries[i].key);
             sb_puts(&parts[i], ": ");
@@ -347,7 +498,7 @@ static void u_inspect_to(USb *sb, UValue v) {
     case U_FN: case U_BUILTIN: sb_puts(sb, v.as.fn->inspect); break;
     case U_MOD: {
         UMod *m = v.as.mod;
-        const char **names = u_alloc((size_t)(m->count ? m->count : 1) * sizeof(char *));
+        const char **names = u_xalloc((size_t)(m->count ? m->count : 1) * sizeof(char *));
         memcpy(names, m->names, (size_t)m->count * sizeof(char *));
         qsort(names, (size_t)m->count, sizeof(char *), u_cmp_cstr);
         sb_printf(sb, "module %s {", m->name);
@@ -410,7 +561,6 @@ static int64_t u_map_find(UMap *m, UValue key) {
 }
 
 static void u_map_reindex(UMap *m, size_t icap) {
-    free(m->index);
     m->icap = icap;
     m->index = u_alloc(icap * sizeof(int64_t));
     for (size_t i = 0; i < icap; i++) m->index[i] = -1;
@@ -1162,10 +1312,10 @@ static int u_cmp_keyorder(const void *a, const void *b) {
 
 /* Entry indexes sorted by the key's Inspect text, like maps.keys/values. */
 static size_t *u_sorted_entries(UMap *m) {
-    UKeyOrder *order = u_alloc((m->len ? m->len : 1) * sizeof(UKeyOrder));
+    UKeyOrder *order = u_xalloc((m->len ? m->len : 1) * sizeof(UKeyOrder));
     for (size_t i = 0; i < m->len; i++) { u_inspect_to(&order[i].text, m->entries[i].key); order[i].idx = i; }
     qsort(order, m->len, sizeof(UKeyOrder), u_cmp_keyorder);
-    size_t *idx = u_alloc((m->len ? m->len : 1) * sizeof(size_t));
+    size_t *idx = u_xalloc((m->len ? m->len : 1) * sizeof(size_t));
     for (size_t i = 0; i < m->len; i++) { idx[i] = order[i].idx; free(order[i].text.buf); }
     free(order);
     return idx;
@@ -1284,7 +1434,7 @@ static bool u_json_encode(USb *sb, UValue v, USb *err) {
         return true;
     case U_MAP: {
         UMap *m = v.as.m;
-        UEntry **entries = u_alloc((m->len ? m->len : 1) * sizeof(UEntry *));
+        UEntry **entries = u_xalloc((m->len ? m->len : 1) * sizeof(UEntry *));
         for (size_t i = 0; i < m->len; i++) {
             if (m->entries[i].key.tag != U_STR) {
                 sb_printf(err, "JSON object keys must be STRING, got %s", u_type_name(m->entries[i].key));
@@ -1716,7 +1866,7 @@ static UValue u_run_command(const char *who, char **cargv) {
 U_BUILTIN_FN(up_run) {
     (void)env_;
     if (argc < 1) u_panic("process.run expects at least 1 argument, got %d", argc);
-    char **cargv = u_alloc((size_t)(argc + 1) * sizeof(char *));
+    char **cargv = u_xalloc((size_t)(argc + 1) * sizeof(char *));
     cargv[0] = u_want_str(argv[0], "process.run command")->data;
     for (int i = 1; i < argc; i++) cargv[i] = u_want_str(argv[i], "process.run argument")->data;
     return u_run_command("process.run", cargv);
@@ -1816,11 +1966,20 @@ static UValue u_module_from_frame(const char *name, int count, const char **name
 /* ---------- entry point ---------- */
 
 static UValue u_program_main(void);
+static void u_register_roots(void);
 
 static void *u_main_thread(void *arg) {
     (void)arg;
+    volatile char top = 0;
+    u_stack_hi = (char *)&top;
+    const char *threshold = getenv("UNDA_GC_THRESHOLD");
+    if (threshold && atol(threshold) > 0) u_gc_min = u_gc_threshold = (size_t)atol(threshold);
+    u_register_roots();
+    u_gc_enabled = true;
     u_program_main();
     fflush(stdout);
+    if (getenv("UNDA_GC_STATS"))
+        fprintf(stderr, "gc: %zu collections, %zu live blocks\n", u_gc_collections, u_gc_count);
     return NULL;
 }
 
