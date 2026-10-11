@@ -21,20 +21,17 @@ var (
 	nilObj   = &object.Nil{}
 )
 
-func init() {
-	builtins.ApplyFunction = applyFunction
-}
-
 func Eval(node ast.Node, env *object.Environment, out io.Writer) object.Object {
 	ctx := NewContext("", out)
 	return EvalWithContext(node, env, ctx)
 }
 
 type Context struct {
-	BaseDir string
-	Out     io.Writer
-	loading map[string]bool
-	modules map[string]*object.Module
+	BaseDir  string
+	Out      io.Writer
+	loading  map[string]bool
+	modules  map[string]*object.Module
+	builtins map[string]*object.Builtin
 }
 
 func NewContext(baseDir string, out io.Writer) *Context {
@@ -43,11 +40,16 @@ func NewContext(baseDir string, out io.Writer) *Context {
 			baseDir = wd
 		}
 	}
-	return &Context{BaseDir: baseDir, Out: out, loading: map[string]bool{}, modules: map[string]*object.Module{}}
+	return &Context{
+		BaseDir:  baseDir,
+		Out:      out,
+		loading:  map[string]bool{},
+		modules:  map[string]*object.Module{},
+		builtins: builtins.New(out),
+	}
 }
 
 func EvalWithContext(node ast.Node, env *object.Environment, ctx *Context) object.Object {
-	out := ctx.Out
 	switch node := node.(type) {
 	case *ast.Program:
 		return evalProgram(node, env, ctx)
@@ -128,7 +130,7 @@ func EvalWithContext(node ast.Node, env *object.Environment, ctx *Context) objec
 	case *ast.IfExpression:
 		return evalIfExpression(node, env, ctx)
 	case *ast.Identifier:
-		return evalIdentifier(node, env, out)
+		return evalIdentifier(node, env, ctx)
 	case *ast.FunctionLiteral:
 		return &object.Function{Parameters: node.Parameters, Body: node.Body, Env: env, Name: node.Name}
 	case *ast.ArrayLiteral:
@@ -354,12 +356,12 @@ func evalIfExpression(ie *ast.IfExpression, env *object.Environment, ctx *Contex
 	return nilObj
 }
 
-func evalIdentifier(node *ast.Identifier, env *object.Environment, out io.Writer) object.Object {
+func evalIdentifier(node *ast.Identifier, env *object.Environment, ctx *Context) object.Object {
 	if val, ok := env.Get(node.Value); ok {
 		return val
 	}
 
-	if builtin, ok := builtins.New(out)[node.Value]; ok {
+	if builtin, ok := ctx.builtins[node.Value]; ok {
 		return builtin
 	}
 
@@ -474,7 +476,7 @@ func evalPipelineExpression(left object.Object, right ast.Expression, env *objec
 
 func evalImportStatement(node *ast.ImportStatement, ctx *Context) object.Object {
 	path := node.Path.Value
-	if module, ok := builtins.StdModules(ctx.Out)[path]; ok {
+	if module, ok := builtins.StdModules(ctx.apply)[path]; ok {
 		return module
 	}
 
@@ -537,8 +539,8 @@ func evalExpressions(exps []ast.Expression, env *object.Environment, ctx *Contex
 	return result
 }
 
-func applyFunction(fn object.Object, args []object.Object, out io.Writer) object.Object {
-	return applyFunctionWithContext(fn, args, NewContext("", out))
+func (ctx *Context) apply(fn object.Object, args []object.Object) object.Object {
+	return applyFunctionWithContext(fn, args, ctx)
 }
 
 func applyFunctionWithContext(fn object.Object, args []object.Object, ctx *Context) object.Object {

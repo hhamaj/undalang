@@ -32,7 +32,11 @@ func New(out io.Writer) map[string]*object.Builtin {
 	return b
 }
 
-func StdModules(out io.Writer) map[string]*object.Module {
+// Applier calls an Unda function value; higher-order builtins use it so
+// callbacks run in the caller's evaluation context.
+type Applier func(fn object.Object, args []object.Object) object.Object
+
+func StdModules(apply Applier) map[string]*object.Module {
 	return map[string]*object.Module{
 		"strings": {Name: "strings", Members: map[string]object.Object{
 			"contains":   builtin(stringsContains),
@@ -47,13 +51,13 @@ func StdModules(out io.Writer) map[string]*object.Module {
 		}},
 		"arrays": {Name: "arrays", Members: map[string]object.Object{
 			"append":  builtin(arraysAppend),
-			"filter":  builtin(arraysFilter(out)),
+			"filter":  builtin(arraysFilter(apply)),
 			"first":   builtin(arraysFirst),
 			"join":    builtin(arraysJoin),
 			"last":    builtin(arraysLast),
-			"map":     builtin(arraysMap(out)),
+			"map":     builtin(arraysMap(apply)),
 			"range":   builtin(arraysRange),
-			"reduce":  builtin(arraysReduce(out)),
+			"reduce":  builtin(arraysReduce(apply)),
 			"reverse": builtin(arraysReverse),
 			"slice":   builtin(arraysSlice),
 		}},
@@ -396,7 +400,7 @@ func arraysSlice(args ...object.Object) object.Object {
 	return &object.Array{Elements: append([]object.Object{}, arr.Elements[int(start.Value):int(end.Value)]...)}
 }
 
-func arraysMap(out io.Writer) object.BuiltinFunction {
+func arraysMap(apply Applier) object.BuiltinFunction {
 	return func(args ...object.Object) object.Object {
 		if len(args) != 2 {
 			return errorf("arrays.map expects 2 arguments, got %d", len(args))
@@ -408,7 +412,7 @@ func arraysMap(out io.Writer) object.BuiltinFunction {
 		fn := args[1]
 		elements := make([]object.Object, 0, len(arr.Elements))
 		for _, el := range arr.Elements {
-			result := ApplyFunction(fn, []object.Object{el}, out)
+			result := apply(fn, []object.Object{el})
 			if result.Type() == object.ErrorObj {
 				return result
 			}
@@ -418,7 +422,7 @@ func arraysMap(out io.Writer) object.BuiltinFunction {
 	}
 }
 
-func arraysFilter(out io.Writer) object.BuiltinFunction {
+func arraysFilter(apply Applier) object.BuiltinFunction {
 	return func(args ...object.Object) object.Object {
 		if len(args) != 2 {
 			return errorf("arrays.filter expects 2 arguments, got %d", len(args))
@@ -430,7 +434,7 @@ func arraysFilter(out io.Writer) object.BuiltinFunction {
 		fn := args[1]
 		elements := []object.Object{}
 		for _, el := range arr.Elements {
-			result := ApplyFunction(fn, []object.Object{el}, out)
+			result := apply(fn, []object.Object{el})
 			if result.Type() == object.ErrorObj {
 				return result
 			}
@@ -442,7 +446,7 @@ func arraysFilter(out io.Writer) object.BuiltinFunction {
 	}
 }
 
-func arraysReduce(out io.Writer) object.BuiltinFunction {
+func arraysReduce(apply Applier) object.BuiltinFunction {
 	return func(args ...object.Object) object.Object {
 		if len(args) != 3 {
 			return errorf("arrays.reduce expects 3 arguments, got %d", len(args))
@@ -454,7 +458,7 @@ func arraysReduce(out io.Writer) object.BuiltinFunction {
 		acc := args[1]
 		fn := args[2]
 		for _, el := range arr.Elements {
-			acc = ApplyFunction(fn, []object.Object{acc, el}, out)
+			acc = apply(fn, []object.Object{acc, el})
 			if acc.Type() == object.ErrorObj {
 				return acc
 			}
@@ -462,8 +466,6 @@ func arraysReduce(out io.Writer) object.BuiltinFunction {
 		return acc
 	}
 }
-
-var ApplyFunction func(fn object.Object, args []object.Object, out io.Writer) object.Object
 
 func mapsGet(args ...object.Object) object.Object {
 	if len(args) != 2 && len(args) != 3 {
