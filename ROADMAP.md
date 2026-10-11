@@ -89,7 +89,7 @@ Planned future backends:
 
 ## 5. Development Roadmap
 
-### Phase 0 — Foundation (bootstrapping)
+### Phase 0 — Foundation (bootstrapping) ✅
 Goal: build the minimum language toolchain and execution loop.
 
 Deliverables:
@@ -109,7 +109,7 @@ Success criteria:
 
 ---
 
-### Phase 1 — Practical Scripting Language
+### Phase 1 — Practical Scripting Language ✅
 Goal: make Unda useful for real small tools/scripts.
 
 Deliverables:
@@ -135,8 +135,15 @@ Success criteria:
 
 ---
 
-### Phase 2 — Compiled Core (C backend)
+### Phase 2 — Compiled Core (C backend) ✅ (foundation)
 Goal: transition from interpreter-first to production-style compiled output.
+
+Status:
+- `semantic` package: symbol resolution, scope validation, and a kind-based type check (`unda check`)
+- `compiler` package: C code generator plus an embedded C runtime (`unda build`, `unda run --native`)
+- `diag` package: `file:line:col` diagnostics with source excerpts; runtime errors carry positions in both backends
+- differential tests keep the interpreter and native output identical
+- open items: garbage collection, `time.format` in the C runtime
 
 Deliverables:
 - semantic analysis pass

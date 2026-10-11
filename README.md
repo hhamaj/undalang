@@ -8,8 +8,40 @@ The project roadmap and language design notes are in [ROADMAP.md](./ROADMAP.md).
 
 ```sh
 go run ./cmd/unda repl
-go run ./cmd/unda run examples/phase1_data_pipeline.unda
+go run ./cmd/unda run examples/phase1_data_pipeline.unda          # interpreter
+go run ./cmd/unda check examples/phase1_data_pipeline.unda        # static checks only
+go run ./cmd/unda build examples/phase1_data_pipeline.unda -o app # native executable
+go run ./cmd/unda run --native examples/phase1_data_pipeline.unda # build + run
 ```
+
+`unda build` needs a C compiler (`cc`, or `$CC`). Pass `--emit-c out.c` to keep the generated C.
+
+## Checking and Diagnostics
+
+`unda check` resolves every name and runs a conservative type check without executing the program. It reports undefined identifiers, assignments to immutable bindings, operator type mismatches between statically known values (`len(x) + "!"`), calls to non-functions, wrong argument counts for known functions and builtins, unknown module members, and invalid map keys or index types. Code whose types depend on runtime values (function parameters, `let mut` bindings) is accepted as is.
+
+```text
+main.unda:3:19: error: type mismatch: INTEGER + STRING
+  3 | let n = len(name) + "!"
+    |                   ^
+```
+
+Runtime errors carry the same location in both the interpreter and native executables:
+
+```text
+runtime error: main.unda:6:20: type mismatch: INTEGER + STRING
+```
+
+## Native Backend
+
+`unda build` lowers the program to C and compiles it with the system C compiler. The native executable behaves like the interpreter: same output formatting, same error messages and locations, and the same standard library. The test suite enforces this by running every program through both backends and comparing stdout, stderr, and the exit code.
+
+Current limitations:
+
+- `time.format` is not available natively yet (`unda build` reports it at compile time).
+- Memory is never freed during a run; there is no garbage collector yet.
+- `process.args()` returns the executable's own arguments.
+- Recursion is limited to 10000 nested calls in both backends.
 
 ## Current Syntax
 
