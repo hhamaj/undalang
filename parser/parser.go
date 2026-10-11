@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"undalang/ast"
 	"undalang/lexer"
@@ -109,7 +110,16 @@ func (p *Parser) ParseProgram() *ast.Program {
 	program.Statements = []ast.Statement{}
 
 	for !p.curTokenIs(token.EOF) {
+		before := len(p.errors)
 		stmt := p.parseStatement()
+		if len(p.errors) > before {
+			// Later errors in the same statement are almost always
+			// consequences of the first one; resume on the next line.
+			p.errors = p.errors[:before+1]
+			for !p.peekTokenIs(token.EOF) && p.peekToken.Line == p.curToken.Line {
+				p.nextToken()
+			}
+		}
 		if stmt != nil {
 			program.Statements = append(program.Statements, stmt)
 		}
@@ -716,7 +726,18 @@ func (p *Parser) peekError(t token.Type) {
 }
 
 func (p *Parser) noPrefixParseFnError(tok token.Token) {
-	p.errors = append(p.errors, fmt.Sprintf("line %d:%d no parser for token %s (%q)", tok.Line, tok.Column, tok.Type, tok.Literal))
+	var msg string
+	switch {
+	case tok.Type == token.Illegal && strings.HasPrefix(tok.Literal, `"`):
+		msg = "unterminated string literal"
+	case tok.Type == token.Illegal:
+		msg = fmt.Sprintf("unexpected character %q", tok.Literal)
+	case tok.Type == token.EOF:
+		msg = "unexpected end of input"
+	default:
+		msg = fmt.Sprintf("unexpected %q", tok.Literal)
+	}
+	p.errors = append(p.errors, fmt.Sprintf("line %d:%d %s", tok.Line, tok.Column, msg))
 }
 
 func (p *Parser) atCur(msg string) string {

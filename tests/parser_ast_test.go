@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"strings"
 	"testing"
 
 	"undalang/ast"
@@ -133,4 +134,21 @@ func parse(t *testing.T, input string) *ast.Program {
 		t.Fatalf("parser errors: %v", p.Errors())
 	}
 	return program
+}
+
+func TestParserReportsOneErrorPerStatement(t *testing.T) {
+	tests := map[string][]string{
+		"println(1 +)":            {`line 1:12 unexpected ")"`},
+		"fn f( { }":               {"line 1:9 expected next token to be ), got } instead"},
+		"let s = \"abc":           {"line 1:9 unterminated string literal"},
+		"let x = @":               {`line 1:9 unexpected character "@"`},
+		"let = 5\nlet y = 2\nz +": {"line 1:5 expected next token to be IDENT, got = instead", "line 4:1 unexpected end of input"},
+	}
+	for input, want := range tests {
+		p := parser.New(lexer.New(input + "\n"))
+		p.ParseProgram()
+		if strings.Join(p.Errors(), "\n") != strings.Join(want, "\n") {
+			t.Errorf("%q:\ngot  %q\nwant %q", input, p.Errors(), want)
+		}
+	}
 }

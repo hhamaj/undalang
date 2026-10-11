@@ -121,8 +121,11 @@ func (l *Lexer) NextToken() token.Token {
 		tok = l.newToken(token.RBracket, l.ch)
 		l.readChar()
 	case '"':
-		tok.Type = token.String
-		tok.Literal = l.readString()
+		lit, ok := l.readString()
+		tok.Type, tok.Literal = token.String, lit
+		if !ok {
+			tok.Type, tok.Literal = token.Illegal, `"`+lit
+		}
 	case 0:
 		tok.Literal = ""
 		tok.Type = token.EOF
@@ -206,11 +209,28 @@ func (l *Lexer) readNumber() (string, token.Type) {
 			l.readChar()
 		}
 	}
+	// Exponent: 1e5, 2.5e-3, 3E+2.
+	if l.ch == 'e' || l.ch == 'E' {
+		next := l.peekChar()
+		signed := (next == '+' || next == '-') && l.readPosition+1 < len(l.input) && isDigit(l.input[l.readPosition+1])
+		if isDigit(next) || signed {
+			typ = token.Float
+			l.readChar()
+			if signed {
+				l.readChar()
+			}
+			for isDigit(l.ch) {
+				l.readChar()
+			}
+		}
+	}
 
 	return l.input[pos:l.position], typ
 }
 
-func (l *Lexer) readString() string {
+// readString reads a string literal; ok is false when the input ends
+// before the closing quote.
+func (l *Lexer) readString() (value string, ok bool) {
 	l.readChar()
 	pos := l.position
 
@@ -222,10 +242,11 @@ func (l *Lexer) readString() string {
 	}
 
 	raw := l.input[pos:l.position]
-	if l.ch == '"' {
-		l.readChar()
+	if l.ch != '"' {
+		return raw, false
 	}
-	return unescape(raw)
+	l.readChar()
+	return unescape(raw), true
 }
 
 func (l *Lexer) twoCharToken(typ token.Type) token.Token {

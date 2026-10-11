@@ -120,3 +120,24 @@ match x { _ -> {"ok": true}[ "ok" ] }`
 		}
 	}
 }
+
+func TestLexerNumbersCommentsAndStrings(t *testing.T) {
+	input := `1e5 2.5e-3 3E+2 7 1.5 1e x // comment "ignored"
+1..3 "open`
+	tests := []struct {
+		typ     token.Type
+		literal string
+	}{
+		{token.Float, "1e5"}, {token.Float, "2.5e-3"}, {token.Float, "3E+2"},
+		{token.Int, "7"}, {token.Float, "1.5"}, {token.Int, "1"}, {token.Ident, "e"},
+		{token.Ident, "x"}, {token.Int, "1"}, {token.DotDot, ".."}, {token.Int, "3"},
+		{token.Illegal, `"open`}, {token.EOF, ""},
+	}
+	l := lexer.New(input)
+	for i, tt := range tests {
+		tok := l.NextToken()
+		if tok.Type != tt.typ || tok.Literal != tt.literal {
+			t.Fatalf("token %d: got %s %q, want %s %q", i, tok.Type, tok.Literal, tt.typ, tt.literal)
+		}
+	}
+}
