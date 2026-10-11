@@ -568,8 +568,21 @@ static UValue u_index(UValue l, UValue i) {
         return idx < 0 ? uv_nil() : l.as.m->entries[idx].value;
     }
     if (l.tag == U_STR && i.tag == U_INT) {
-        if (i.as.i < 0 || (uint64_t)i.as.i >= l.as.s->len) return uv_nil();
-        return uv_str_n(l.as.s->data + i.as.i, 1);
+        /* Strings index by character (code point), not byte. */
+        UStr *s = l.as.s;
+        if (i.as.i < 0) return uv_nil();
+        int64_t n = 0;
+        for (size_t pos = 0; pos < s->len; n++) {
+            int size;
+            int32_t r = u_utf8_decode((const unsigned char *)s->data + pos, s->len - pos, &size);
+            if (n == i.as.i) {
+                USb sb = {0};
+                u_utf8_encode(&sb, r);
+                return uv_sb_value(&sb);
+            }
+            pos += (size_t)size;
+        }
+        return uv_nil();
     }
     u_panic("index operator not supported: %s[%s]", u_type_name(l), u_type_name(i));
 }
@@ -712,7 +725,18 @@ U_BUILTIN_FN(ub_len) {
     (void)env_;
     U_ARGC("len", 1);
     switch (argv[0].tag) {
-    case U_STR: return uv_int((int64_t)argv[0].as.s->len);
+    case U_STR: {
+        UStr *s = argv[0].as.s;
+        int64_t n = 0;
+        for (size_t pos = 0; pos < s->len; n++) {
+            unsigned char c = (unsigned char)s->data[pos];
+            if (c < 0x80) { pos++; continue; }
+            int size;
+            u_utf8_decode((const unsigned char *)s->data + pos, s->len - pos, &size);
+            pos += (size_t)size;
+        }
+        return uv_int(n);
+    }
     case U_ARR: return uv_int((int64_t)argv[0].as.a->len);
     case U_MAP: return uv_int((int64_t)argv[0].as.m->len);
     default: u_panic("len does not support %s", u_type_name(argv[0]));

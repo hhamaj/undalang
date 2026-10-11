@@ -537,12 +537,19 @@ func evalIndexExpression(left, index object.Object) object.Object {
 		}
 		return pair.Value
 	case left.Type() == object.StringObj && index.Type() == object.IntegerObj:
-		s := left.(*object.String).Value
+		// Strings index by character (code point), not byte.
 		idx := index.(*object.Integer).Value
-		if idx < 0 || idx >= int64(len(s)) {
+		if idx < 0 {
 			return nilObj
 		}
-		return &object.String{Value: string(s[idx])}
+		i := int64(0)
+		for _, r := range left.(*object.String).Value {
+			if i == idx {
+				return &object.String{Value: string(r)}
+			}
+			i++
+		}
+		return nilObj
 	default:
 		return newError("index operator not supported: %s[%s]", left.Type(), index.Type())
 	}

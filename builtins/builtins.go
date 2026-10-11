@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"undalang/object"
 )
@@ -122,7 +123,7 @@ func lenBuiltin(args ...object.Object) object.Object {
 	}
 	switch arg := args[0].(type) {
 	case *object.String:
-		return &object.Integer{Value: int64(len(arg.Value))}
+		return &object.Integer{Value: int64(utf8.RuneCountInString(arg.Value))}
 	case *object.Array:
 		return &object.Integer{Value: int64(len(arg.Elements))}
 	case *object.Map:

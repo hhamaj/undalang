@@ -249,6 +249,7 @@ println(sum([1, 2, 3, 4]))
 `,
 	"err_pattern_key": "fn k(key) { match {} { {key: v} -> v } }\nk([1])",
 	"err_guard":       "match [1] { n if n > 0 -> n }",
+	"unicode_strings": "let s = \"çay ☕ 🍵\"\nprintln(len(s), s[0], s[4], s[6], s[7], s[-1], len(\"\"))\nprintln(len(\"ab\"), \"日本語\"[2])\n",
 	"err_type_mismatch": `fn f(v) { return v + "a" }
 println("start")
 f(1)`,

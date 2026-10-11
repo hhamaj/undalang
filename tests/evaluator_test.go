@@ -139,6 +139,15 @@ s.missing`,
 	}
 }
 
+func TestEvalStringsAreCharacterBased(t *testing.T) {
+	evaluated, _ := testEval(t, `len("çay")`)
+	testExpectedObject(t, evaluated, int64(3))
+	evaluated, _ = testEval(t, `"ğüş"[1]`)
+	testExpectedObject(t, evaluated, "ü")
+	evaluated, _ = testEval(t, `"ab"[2]`)
+	testExpectedObject(t, evaluated, nil)
+}
+
 func testEval(t *testing.T, input string) (object.Object, *bytes.Buffer) {
 	return testEvalInDir(t, input, "")
 }
