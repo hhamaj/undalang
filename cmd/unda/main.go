@@ -1,10 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
+	"undalang/compiler"
 	"undalang/diag"
 	"undalang/repl"
 	"undalang/runner"
@@ -24,6 +28,8 @@ func main() {
 		os.Exit(runCmd(os.Args[2:]))
 	case "check":
 		os.Exit(checkCmd(os.Args[2:]))
+	case "build":
+		os.Exit(buildCmd(os.Args[2:]))
 	default:
 		fmt.Fprintf(os.Stderr, "error: unknown command %q\n", os.Args[1])
 		usage()
@@ -34,8 +40,9 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  unda repl")
-	fmt.Fprintln(os.Stderr, "  unda run path/to/file.unda")
+	fmt.Fprintln(os.Stderr, "  unda run [--native] path/to/file.unda")
 	fmt.Fprintln(os.Stderr, "  unda check [--native] path/to/file.unda")
+	fmt.Fprintln(os.Stderr, "  unda build path/to/file.unda [-o output] [--emit-c file.c]")
 }
 
 // parseArgs separates flags from positional arguments so flags may appear
@@ -97,11 +104,35 @@ func singleFile(cmd string, args []string, valueFlags, boolFlags []string) (map[
 }
 
 func runCmd(args []string) int {
-	_, file, ok := singleFile("run", args, nil, nil)
+	flags, file, ok := singleFile("run", args, nil, []string{"native"})
 	if !ok {
 		return 1
 	}
-	return runner.RunFile(file, os.Stdout, os.Stderr)
+	if flags["native"] == "" {
+		return runner.RunFile(file, os.Stdout, os.Stderr)
+	}
+
+	dir, err := os.MkdirTemp("", "unda-run-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	defer os.RemoveAll(dir)
+	exe := filepath.Join(dir, compiler.DefaultOutput(file))
+	if code := build(file, compiler.Options{Output: exe}); code != 0 {
+		return code
+	}
+	cmd := exec.Command(exe)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return exitErr.ExitCode()
+		}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 func checkCmd(args []string) int {
@@ -115,6 +146,32 @@ func checkCmd(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+func buildCmd(args []string) int {
+	flags, file, ok := singleFile("build", args, []string{"o", "emit-c"}, nil)
+	if !ok {
+		return 1
+	}
+	opts := compiler.Options{Output: flags["o"], EmitC: flags["emit-c"]}
+	if opts.Output == "" && opts.EmitC == "" {
+		opts.Output = compiler.DefaultOutput(file)
+	}
+	return build(file, opts)
+}
+
+func build(file string, opts compiler.Options) int {
+	err := compiler.Build(file, opts)
+	if err == nil {
+		return 0
+	}
+	var diagErr *compiler.DiagnosticsError
+	if errors.As(err, &diagErr) {
+		printDiagnostics(diagErr.Program)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	return 1
 }
 
 func printDiagnostics(prog *semantic.Program) {
