@@ -216,16 +216,7 @@ func evalPrefixExpression(operator string, right object.Object) object.Object {
 }
 
 func evalBangOperatorExpression(right object.Object) object.Object {
-	switch right {
-	case trueObj:
-		return falseObj
-	case falseObj:
-		return trueObj
-	case nilObj:
-		return trueObj
-	default:
-		return nativeBool(!isTruthy(right))
-	}
+	return nativeBool(!isTruthy(right))
 }
 
 func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
@@ -579,14 +570,14 @@ func nativeBool(input bool) *object.Boolean {
 	return falseObj
 }
 
+// isTruthy compares by value: builtins return fresh Boolean and Nil objects,
+// so identity checks against the shared singletons are not enough.
 func isTruthy(obj object.Object) bool {
-	switch obj {
-	case nilObj:
+	switch obj := obj.(type) {
+	case *object.Nil:
 		return false
-	case trueObj:
-		return true
-	case falseObj:
-		return false
+	case *object.Boolean:
+		return obj.Value
 	default:
 		return true
 	}
