@@ -422,3 +422,67 @@ func (ce *CallExpression) String() string {
 	out.WriteString(")")
 	return out.String()
 }
+
+// Position returns the source location used to report diagnostics and
+// runtime errors for a node. Calls are reported at their callee so the
+// location points at the function name rather than the opening paren.
+func Position(node Node) (line, column int) {
+	var tok token.Token
+	switch n := node.(type) {
+	case *CallExpression:
+		if member, ok := n.Function.(*MemberExpression); ok && member.Property != nil {
+			return member.Property.Token.Line, member.Property.Token.Column
+		}
+		return Position(n.Function)
+	case *AssignStatement:
+		tok = n.Name.Token
+	case *LetStatement:
+		tok = n.Token
+	case *ReturnStatement:
+		tok = n.Token
+	case *ImportStatement:
+		tok = n.Token
+	case *ExpressionStatement:
+		if n.Expression != nil {
+			return Position(n.Expression)
+		}
+		tok = n.Token
+	case *BlockStatement:
+		tok = n.Token
+	case *Identifier:
+		tok = n.Token
+	case *IntegerLiteral:
+		tok = n.Token
+	case *FloatLiteral:
+		tok = n.Token
+	case *StringLiteral:
+		tok = n.Token
+	case *Boolean:
+		tok = n.Token
+	case *NilLiteral:
+		tok = n.Token
+	case *PrefixExpression:
+		tok = n.Token
+	case *InfixExpression:
+		tok = n.Token
+	case *PipelineExpression:
+		tok = n.Token
+	case *IfExpression:
+		tok = n.Token
+	case *FunctionLiteral:
+		tok = n.Token
+	case *ArrayLiteral:
+		tok = n.Token
+	case *MapLiteral:
+		tok = n.Token
+	case *IndexExpression:
+		tok = n.Token
+	case *MemberExpression:
+		tok = n.Token
+	case *MatchExpression:
+		tok = n.Token
+	default:
+		return 0, 0
+	}
+	return tok.Line, tok.Column
+}

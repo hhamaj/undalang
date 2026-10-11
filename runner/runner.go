@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"undalang/diag"
 	"undalang/evaluator"
 	"undalang/lexer"
 	"undalang/object"
@@ -25,7 +26,7 @@ func RunFile(path string, out io.Writer, errOut io.Writer) int {
 		return 1
 	}
 
-	return RunSourceInDir(string(input), filepath.Dir(path), out, errOut)
+	return runSource(string(input), filepath.Dir(path), diag.DisplayPath(path), out, errOut)
 }
 
 func RunSource(input string, out io.Writer, errOut io.Writer) int {
@@ -33,6 +34,10 @@ func RunSource(input string, out io.Writer, errOut io.Writer) int {
 }
 
 func RunSourceInDir(input string, baseDir string, out io.Writer, errOut io.Writer) int {
+	return runSource(input, baseDir, "", out, errOut)
+}
+
+func runSource(input, baseDir, file string, out io.Writer, errOut io.Writer) int {
 	l := lexer.New(input)
 	p := parser.New(l)
 	program := p.ParseProgram()
@@ -43,7 +48,9 @@ func RunSourceInDir(input string, baseDir string, out io.Writer, errOut io.Write
 	}
 
 	env := object.NewEnvironment()
-	result := evaluator.EvalWithContext(program, env, evaluator.NewContext(baseDir, out))
+	ctx := evaluator.NewContext(baseDir, out)
+	ctx.File = file
+	result := evaluator.EvalWithContext(program, env, ctx)
 	if errObj, ok := result.(*object.Error); ok {
 		fmt.Fprintln(errOut, errObj.Inspect())
 		return 1

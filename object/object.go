@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"undalang/ast"
+	"undalang/diag"
 )
 
 type Type string
@@ -74,16 +75,25 @@ func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
 
 type Error struct {
 	Message string
+	File    string
+	Line    int
+	Column  int
 }
 
-func (e *Error) Type() Type      { return ErrorObj }
-func (e *Error) Inspect() string { return "runtime error: " + e.Message }
+func (e *Error) Type() Type { return ErrorObj }
+func (e *Error) Inspect() string {
+	return "runtime error: " + diag.Location(e.File, e.Line, e.Column) + e.Message
+}
 
 type Function struct {
 	Parameters []*ast.Identifier
 	Body       *ast.BlockStatement
 	Env        *Environment
 	Name       string
+	// File and BaseDir record where the function was defined so errors and
+	// imports inside its body resolve against the defining module.
+	File    string
+	BaseDir string
 }
 
 func (f *Function) Type() Type { return FunctionObj }

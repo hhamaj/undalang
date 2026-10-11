@@ -10,6 +10,7 @@ import (
 
 	"undalang/ast"
 	"undalang/builtins"
+	"undalang/diag"
 	"undalang/lexer"
 	"undalang/object"
 	"undalang/parser"
@@ -22,7 +23,7 @@ var (
 )
 
 // MaxCallDepth bounds Unda-level recursion so runaway programs report an
-// error instead of exhausting the host stack.
+// error instead of exhausting the host stack. The C backend uses the same limit.
 const MaxCallDepth = 10000
 
 func Eval(node ast.Node, env *object.Environment, out io.Writer) object.Object {
@@ -31,7 +32,10 @@ func Eval(node ast.Node, env *object.Environment, out io.Writer) object.Object {
 }
 
 type Context struct {
-	BaseDir  string
+	BaseDir string
+	// File is the display path of the module being evaluated; it is attached
+	// to runtime errors.
+	File     string
 	Out      io.Writer
 	loading  map[string]bool
 	modules  map[string]*object.Module
@@ -54,7 +58,20 @@ func NewContext(baseDir string, out io.Writer) *Context {
 	}
 }
 
+// EvalWithContext evaluates node and stamps any runtime error created while
+// evaluating it with the node's source position. Errors that already carry a
+// position (raised deeper in the tree) are left untouched.
 func EvalWithContext(node ast.Node, env *object.Environment, ctx *Context) object.Object {
+	result := eval(node, env, ctx)
+	if errObj, ok := result.(*object.Error); ok && errObj.Line == 0 {
+		if line, col := ast.Position(node); line > 0 {
+			errObj.File, errObj.Line, errObj.Column = ctx.File, line, col
+		}
+	}
+	return result
+}
+
+func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 	switch node := node.(type) {
 	case *ast.Program:
 		return evalProgram(node, env, ctx)
@@ -137,7 +154,7 @@ func EvalWithContext(node ast.Node, env *object.Environment, ctx *Context) objec
 	case *ast.Identifier:
 		return evalIdentifier(node, env, ctx)
 	case *ast.FunctionLiteral:
-		return &object.Function{Parameters: node.Parameters, Body: node.Body, Env: env, Name: node.Name}
+		return &object.Function{Parameters: node.Parameters, Body: node.Body, Env: env, Name: node.Name, File: ctx.File, BaseDir: ctx.BaseDir}
 	case *ast.ArrayLiteral:
 		elements := evalExpressions(node.Elements, env, ctx)
 		if len(elements) == 1 && isError(elements[0]) {
@@ -515,11 +532,11 @@ func evalImportStatement(node *ast.ImportStatement, ctx *Context) object.Object 
 	}
 
 	ctx.loading[cleanPath] = true
-	previousBase := ctx.BaseDir
-	ctx.BaseDir = filepath.Dir(cleanPath)
+	previousBase, previousFile := ctx.BaseDir, ctx.File
+	ctx.BaseDir, ctx.File = filepath.Dir(cleanPath), diag.DisplayPath(cleanPath)
 	moduleEnv := object.NewEnvironment()
 	result := EvalWithContext(program, moduleEnv, ctx)
-	ctx.BaseDir = previousBase
+	ctx.BaseDir, ctx.File = previousBase, previousFile
 	delete(ctx.loading, cleanPath)
 	if isError(result) {
 		return result
@@ -561,9 +578,14 @@ func applyFunctionWithContext(fn object.Object, args []object.Object, ctx *Conte
 		for paramIdx, param := range fn.Parameters {
 			extendedEnv.Define(param.Value, args[paramIdx], false)
 		}
+		previousBase, previousFile := ctx.BaseDir, ctx.File
+		if fn.File != "" || fn.BaseDir != "" {
+			ctx.BaseDir, ctx.File = fn.BaseDir, fn.File
+		}
 		ctx.depth++
 		evaluated := EvalWithContext(fn.Body, extendedEnv, ctx)
 		ctx.depth--
+		ctx.BaseDir, ctx.File = previousBase, previousFile
 		if returnValue, ok := evaluated.(*object.ReturnValue); ok {
 			return returnValue.Value
 		}
