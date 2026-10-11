@@ -57,6 +57,9 @@ s.missing`, []string{`2:2 module "strings" has no member "missing"`}},
 		{"iterate int", "for x in 5 { x }", []string{"1:10 cannot iterate over INTEGER"}},
 		{"loop var immutable", "for x in [1] { x = 2 }", []string{`1:16 cannot assign to immutable binding "x"`}},
 		{"loop var scope", "for x in [1] { x }\nx", []string{"2:1 identifier not found: x"}},
+		{"duplicate binding", "match [1, 2] { [a, a] -> a }", []string{"1:20 duplicate binding a in pattern"}},
+		{"binding scope", "match 1 { n -> n }\nn", []string{"2:1 identifier not found: n"}},
+		{"bad pattern key", "match {} { {[1]: v} -> v }", []string{"1:12 unusable as map key: ARRAY"}},
 		{"duplicate loop var", "for x, x in [1] { x }", []string{"1:8 duplicate loop variable x"}},
 	}
 	for _, tt := range tests {
@@ -82,6 +85,7 @@ func TestSemanticAcceptsDynamicCode(t *testing.T) {
 		"param shadows":     "fn f(x) { let x = x + 1\nx }",
 		"match and if":      "let v = match 1 { 1 -> \"a\", _ -> 2 }\nif v { 1 } else { 2 }",
 		"loops":             "let mut n = 0\nwhile n < 3 { n = n + 1\nif n == 2 { continue }\nbreak }\nfor i, c in \"ab\" { n = n + i }",
+		"patterns":          "match [1, {\"a\": 2}] { [x, {\"a\": y}] if x < y -> x + y, [_, ..rest] -> rest, _ -> nil }",
 		"comments":          "// header\nlet a = 1 // trailing\n// footer",
 	}
 	for name, src := range tests {

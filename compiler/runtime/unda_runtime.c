@@ -153,6 +153,12 @@ static void u_arr_push(UArr *a, UValue v) {
     a->items[a->len++] = v;
 }
 
+static UArr *u_arr_tail(UArr *src, size_t from) {
+    UArr *a = u_arr_new(src->len - from);
+    for (size_t i = from; i < src->len; i++) a->items[a->len++] = src->items[i];
+    return a;
+}
+
 static UValue u_closure(UCode code, UFrame *env, int arity, const char *name, const char *inspect) {
     UFn *fn = u_alloc(sizeof(UFn));
     fn->code = code; fn->env = env; fn->arity = arity; fn->name = name; fn->inspect = inspect;

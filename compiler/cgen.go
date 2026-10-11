@@ -505,12 +505,23 @@ func (f *fgen) matchArms(arms []ast.MatchArm, value, result string) {
 		return
 	}
 	arm := arms[0]
-	if arm.Wildcard {
+	_, wildcard := arm.Pattern.(*ast.WildcardPattern)
+	if wildcard && arm.Guard == nil {
 		f.line("%s = %s;", result, f.expr(arm.Value))
 		return
 	}
-	p := f.expr(arm.Pattern)
-	f.line("if (u_equal(%s, %s)) {", value, p)
+	ok := f.temp()
+	f.line("bool %s = true;", ok)
+	f.pattern(arm.Pattern, value, ok)
+	if arm.Guard != nil {
+		f.line("if (%s) {", ok)
+		f.indent++
+		g := f.expr(arm.Guard)
+		f.line("%s = u_truthy(%s);", ok, g)
+		f.indent--
+		f.line("}")
+	}
+	f.line("if (%s) {", ok)
 	f.indent++
 	f.line("%s = %s;", result, f.expr(arm.Value))
 	f.indent--
@@ -519,6 +530,65 @@ func (f *fgen) matchArms(arms []ast.MatchArm, value, result string) {
 	f.matchArms(arms[1:], value, result)
 	f.indent--
 	f.line("}")
+}
+
+// pattern emits code that clears ok when value does not match p, checking
+// parts left to right and stopping at the first mismatch like the
+// interpreter. Bindings are written to their slots as they match.
+func (f *fgen) pattern(p ast.Pattern, value, ok string) {
+	switch p := p.(type) {
+	case *ast.WildcardPattern:
+	case *ast.BindingPattern:
+		f.line("if (%s) S[%d] = %s;", ok, f.mod.Bindings[p.Name].Slot, value)
+	case *ast.ValuePattern:
+		f.line("if (%s) {", ok)
+		f.indent++
+		expected := f.expr(p.Value)
+		f.line("%s = u_equal(%s, %s);", ok, value, expected)
+		f.indent--
+		f.line("}")
+	case *ast.ArrayPattern:
+		cmp := "=="
+		if p.HasRest {
+			cmp = ">="
+		}
+		f.line("if (%s) %s = %s.tag == U_ARR && %s.as.a->len %s %d;", ok, ok, value, value, cmp, len(p.Elements))
+		for i, el := range p.Elements {
+			f.line("if (%s) {", ok)
+			f.indent++
+			item := f.temp()
+			f.line("UValue %s = %s.as.a->items[%d];", item, value, i)
+			f.pattern(el, item, ok)
+			f.indent--
+			f.line("}")
+		}
+		if p.Rest != nil {
+			f.line("if (%s) S[%d] = uv_arrv(u_arr_tail(%s.as.a, %d));", ok, f.mod.Bindings[p.Rest].Slot, value, len(p.Elements))
+		}
+	case *ast.MapPattern:
+		f.line("if (%s) %s = %s.tag == U_MAP;", ok, ok, value)
+		for i, keyExpr := range p.Keys {
+			f.line("if (%s) {", ok)
+			f.indent++
+			key := f.expr(keyExpr)
+			f.loc(p)
+			f.line("u_map_literal_key(%s);", key)
+			idx := f.temp()
+			f.line("int64_t %s = u_map_find(%s.as.m, %s);", idx, value, key)
+			f.line("%s = %s >= 0;", ok, idx)
+			f.line("if (%s) {", ok)
+			f.indent++
+			item := f.temp()
+			f.line("UValue %s = %s.as.m->entries[%s].value;", item, value, idx)
+			f.pattern(p.Values[i], item, ok)
+			f.indent--
+			f.line("}")
+			f.indent--
+			f.line("}")
+		}
+	default:
+		panic(fmt.Sprintf("cgen: unsupported pattern %T", p))
+	}
 }
 
 // functionInspect reproduces object.Function.Inspect for a literal.

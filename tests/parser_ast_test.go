@@ -119,7 +119,7 @@ match "ok" {
 	if !ok {
 		t.Fatalf("expression not *ast.MatchExpression. got=%T", exprStmt.Expression)
 	}
-	if len(match.Arms) != 2 || !match.Arms[1].Wildcard {
+	if _, wildcard := match.Arms[len(match.Arms)-1].Pattern.(*ast.WildcardPattern); len(match.Arms) != 2 || !wildcard {
 		t.Fatalf("bad match arms: %+v", match.Arms)
 	}
 }

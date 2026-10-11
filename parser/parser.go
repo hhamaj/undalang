@@ -546,11 +546,15 @@ func (p *Parser) parseMatchExpression() ast.Expression {
 	for !p.peekTokenIs(token.RBrace) {
 		p.nextToken()
 		arm := ast.MatchArm{}
-		if p.curTokenIs(token.Ident) && p.curToken.Literal == "_" {
-			arm.Wildcard = true
-		} else {
-			arm.Pattern = p.parseExpression(lowest)
-			if arm.Pattern == nil {
+		arm.Pattern = p.parsePattern()
+		if arm.Pattern == nil {
+			return nil
+		}
+		if p.peekTokenIs(token.If) {
+			p.nextToken()
+			p.nextToken()
+			arm.Guard = p.parseExpression(lowest)
+			if arm.Guard == nil {
 				return nil
 			}
 		}
@@ -572,6 +576,91 @@ func (p *Parser) parseMatchExpression() ast.Expression {
 		return nil
 	}
 	return expression
+}
+
+// parsePattern parses a match pattern starting at the current token. A bare
+// identifier binds; any other expression is compared by value.
+func (p *Parser) parsePattern() ast.Pattern {
+	switch {
+	case p.curTokenIs(token.Ident) && p.curToken.Literal == "_":
+		return &ast.WildcardPattern{Token: p.curToken}
+	case p.curTokenIs(token.Ident) && p.patternEndsAtPeek():
+		return &ast.BindingPattern{Token: p.curToken, Name: &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}}
+	case p.curTokenIs(token.LBracket):
+		return p.parseArrayPattern()
+	case p.curTokenIs(token.LBrace):
+		return p.parseMapPattern()
+	}
+	tok := p.curToken
+	value := p.parseExpression(lowest)
+	if value == nil {
+		return nil
+	}
+	return &ast.ValuePattern{Token: tok, Value: value}
+}
+
+func (p *Parser) patternEndsAtPeek() bool {
+	switch p.peekToken.Type {
+	case token.Arrow, token.If, token.Comma, token.RBracket, token.RBrace:
+		return true
+	}
+	return false
+}
+
+func (p *Parser) parseArrayPattern() ast.Pattern {
+	pat := &ast.ArrayPattern{Token: p.curToken}
+	for !p.peekTokenIs(token.RBracket) {
+		p.nextToken()
+		if p.curTokenIs(token.DotDot) {
+			pat.HasRest = true
+			if p.peekTokenIs(token.Ident) {
+				p.nextToken()
+				pat.Rest = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+			}
+			if !p.peekTokenIs(token.RBracket) {
+				p.errors = append(p.errors, p.atCur("rest pattern must be last in an array pattern"))
+				return nil
+			}
+			break
+		}
+		el := p.parsePattern()
+		if el == nil {
+			return nil
+		}
+		pat.Elements = append(pat.Elements, el)
+		if !p.peekTokenIs(token.RBracket) && !p.expectPeek(token.Comma) {
+			return nil
+		}
+	}
+	if !p.expectPeek(token.RBracket) {
+		return nil
+	}
+	return pat
+}
+
+func (p *Parser) parseMapPattern() ast.Pattern {
+	pat := &ast.MapPattern{Token: p.curToken}
+	for !p.peekTokenIs(token.RBrace) {
+		p.nextToken()
+		key := p.parseExpression(lowest)
+		if key == nil || !p.expectPeek(token.Colon) {
+			return nil
+		}
+		p.nextToken()
+		value := p.parsePattern()
+		if value == nil {
+			return nil
+		}
+		pat.Keys = append(pat.Keys, key)
+		pat.Values = append(pat.Values, value)
+		if !p.peekTokenIs(token.RBrace) && !p.expectPeek(token.Comma) {
+			return nil
+		}
+	}
+	if !p.expectPeek(token.RBrace) {
+		return nil
+	}
+	return pat
 }
 
 func (p *Parser) parseExpressionList(end token.Type) []ast.Expression {

@@ -399,10 +399,91 @@ func (me *MemberExpression) String() string {
 	return me.Object.String() + "." + me.Property.String()
 }
 
+// Pattern is the left side of a match arm.
+type Pattern interface {
+	Node
+	patternNode()
+}
+
+// WildcardPattern (`_`) matches anything without binding.
+type WildcardPattern struct {
+	Token token.Token
+}
+
+func (wp *WildcardPattern) patternNode()         {}
+func (wp *WildcardPattern) TokenLiteral() string { return wp.Token.Literal }
+func (wp *WildcardPattern) String() string       { return "_" }
+
+// BindingPattern matches anything and binds it to Name.
+type BindingPattern struct {
+	Token token.Token
+	Name  *Identifier
+}
+
+func (bp *BindingPattern) patternNode()         {}
+func (bp *BindingPattern) TokenLiteral() string { return bp.Token.Literal }
+func (bp *BindingPattern) String() string       { return bp.Name.String() }
+
+// ValuePattern matches values equal to an expression, such as a literal.
+type ValuePattern struct {
+	Token token.Token
+	Value Expression
+}
+
+func (vp *ValuePattern) patternNode()         {}
+func (vp *ValuePattern) TokenLiteral() string { return vp.Token.Literal }
+func (vp *ValuePattern) String() string       { return vp.Value.String() }
+
+// ArrayPattern matches arrays element by element. With a rest marker
+// (`..` or `..name`) it matches arrays at least as long as Elements and
+// optionally binds the remaining elements.
+type ArrayPattern struct {
+	Token    token.Token
+	Elements []Pattern
+	HasRest  bool
+	Rest     *Identifier
+}
+
+func (ap *ArrayPattern) patternNode()         {}
+func (ap *ArrayPattern) TokenLiteral() string { return ap.Token.Literal }
+func (ap *ArrayPattern) String() string {
+	parts := make([]string, 0, len(ap.Elements)+1)
+	for _, el := range ap.Elements {
+		parts = append(parts, el.String())
+	}
+	if ap.HasRest {
+		rest := ".."
+		if ap.Rest != nil {
+			rest += ap.Rest.String()
+		}
+		parts = append(parts, rest)
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// MapPattern matches maps containing every key, with each value matching
+// its sub-pattern. Extra keys are allowed.
+type MapPattern struct {
+	Token  token.Token
+	Keys   []Expression
+	Values []Pattern
+}
+
+func (mp *MapPattern) patternNode()         {}
+func (mp *MapPattern) TokenLiteral() string { return mp.Token.Literal }
+func (mp *MapPattern) String() string {
+	parts := make([]string, 0, len(mp.Keys))
+	for i := range mp.Keys {
+		parts = append(parts, mp.Keys[i].String()+": "+mp.Values[i].String())
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
+}
+
 type MatchArm struct {
-	Pattern  Expression
-	Wildcard bool
-	Value    Expression
+	Pattern Pattern
+	// Guard, when set, must be truthy for the arm to be chosen.
+	Guard Expression
+	Value Expression
 }
 
 type MatchExpression struct {
@@ -417,9 +498,9 @@ func (me *MatchExpression) String() string {
 	var out bytes.Buffer
 	arms := []string{}
 	for _, a := range me.Arms {
-		pattern := "_"
-		if !a.Wildcard {
-			pattern = a.Pattern.String()
+		pattern := a.Pattern.String()
+		if a.Guard != nil {
+			pattern += " if " + a.Guard.String()
 		}
 		arms = append(arms, pattern+" -> "+a.Value.String())
 	}
@@ -537,6 +618,16 @@ func Position(node Node) (line, column int) {
 	case *MemberExpression:
 		tok = n.Token
 	case *MatchExpression:
+		tok = n.Token
+	case *WildcardPattern:
+		tok = n.Token
+	case *BindingPattern:
+		tok = n.Token
+	case *ValuePattern:
+		return Position(n.Value)
+	case *ArrayPattern:
+		tok = n.Token
+	case *MapPattern:
 		tok = n.Token
 	default:
 		return 0, 0

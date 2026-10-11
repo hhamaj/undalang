@@ -566,18 +566,86 @@ func evalMatchExpression(node *ast.MatchExpression, env *object.Environment, ctx
 		return value
 	}
 	for _, arm := range node.Arms {
-		if arm.Wildcard {
-			return EvalWithContext(arm.Value, env, ctx)
+		// Bindings live in a fresh scope per arm so a failed arm leaks nothing.
+		armEnv := object.NewEnclosedEnvironment(env)
+		ok, abrupt := matchPattern(arm.Pattern, value, armEnv, ctx)
+		if abrupt != nil {
+			return abrupt
 		}
-		pattern := EvalWithContext(arm.Pattern, env, ctx)
-		if isAbrupt(pattern) {
-			return pattern
+		if !ok {
+			continue
 		}
-		if objectsEqual(value, pattern) {
-			return EvalWithContext(arm.Value, env, ctx)
+		if arm.Guard != nil {
+			guard := EvalWithContext(arm.Guard, armEnv, ctx)
+			if isAbrupt(guard) {
+				return guard
+			}
+			if !isTruthy(guard) {
+				continue
+			}
 		}
+		return EvalWithContext(arm.Value, armEnv, ctx)
 	}
 	return nilObj
+}
+
+// matchPattern reports whether value matches pattern, defining bindings in
+// env. A non-nil second result is an error or signal to propagate.
+func matchPattern(pattern ast.Pattern, value object.Object, env *object.Environment, ctx *Context) (bool, object.Object) {
+	switch p := pattern.(type) {
+	case *ast.WildcardPattern:
+		return true, nil
+	case *ast.BindingPattern:
+		env.Define(p.Name.Value, value, false)
+		return true, nil
+	case *ast.ValuePattern:
+		expected := EvalWithContext(p.Value, env, ctx)
+		if isAbrupt(expected) {
+			return false, expected
+		}
+		return objectsEqual(value, expected), nil
+	case *ast.ArrayPattern:
+		arr, ok := value.(*object.Array)
+		if !ok || len(arr.Elements) < len(p.Elements) || (!p.HasRest && len(arr.Elements) != len(p.Elements)) {
+			return false, nil
+		}
+		for i, el := range p.Elements {
+			if ok, abrupt := matchPattern(el, arr.Elements[i], env, ctx); !ok || abrupt != nil {
+				return false, abrupt
+			}
+		}
+		if p.Rest != nil {
+			rest := append([]object.Object{}, arr.Elements[len(p.Elements):]...)
+			env.Define(p.Rest.Value, &object.Array{Elements: rest}, false)
+		}
+		return true, nil
+	case *ast.MapPattern:
+		m, ok := value.(*object.Map)
+		if !ok {
+			return false, nil
+		}
+		for i, keyExpr := range p.Keys {
+			key := EvalWithContext(keyExpr, env, ctx)
+			if isAbrupt(key) {
+				return false, key
+			}
+			hashable, ok := key.(object.Hashable)
+			if !ok {
+				err := newError("unusable as map key: %s", key.Type())
+				err.File, err.Line, err.Column = ctx.File, p.Token.Line, p.Token.Column
+				return false, err
+			}
+			pair, ok := m.Pairs[hashable.HashKey()]
+			if !ok {
+				return false, nil
+			}
+			if ok, abrupt := matchPattern(p.Values[i], pair.Value, env, ctx); !ok || abrupt != nil {
+				return false, abrupt
+			}
+		}
+		return true, nil
+	}
+	return false, newError("unsupported pattern %T", pattern)
 }
 
 func evalPipelineExpression(left object.Object, right ast.Expression, env *object.Environment, ctx *Context) object.Object {

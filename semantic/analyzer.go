@@ -567,16 +567,18 @@ func (c *checker) expr(e ast.Expression, sc *scope) Type {
 	case *ast.MatchExpression:
 		c.expr(e.Value, sc)
 		result := kindType(KNever)
-		wildcard := false
+		exhaustive := false
 		for _, arm := range e.Arms {
-			if arm.Wildcard {
-				wildcard = true
-			} else {
-				c.expr(arm.Pattern, sc)
+			armScope := newScope(sc, sc.fn)
+			c.pattern(arm.Pattern, armScope)
+			if arm.Guard != nil {
+				c.expr(arm.Guard, armScope)
+			} else if irrefutable(arm.Pattern) {
+				exhaustive = true
 			}
-			result = join(result, c.expr(arm.Value, sc))
+			result = join(result, c.expr(arm.Value, armScope))
 		}
-		if !wildcard {
+		if !exhaustive {
 			result = join(result, kindType(KNil))
 		}
 		return result
@@ -585,6 +587,45 @@ func (c *checker) expr(e ast.Expression, sc *scope) Type {
 		return c.call(e, callee, c.exprs(e.Arguments, sc))
 	}
 	return unknown()
+}
+
+// pattern resolves a match pattern, declaring its bindings in sc.
+func (c *checker) pattern(p ast.Pattern, sc *scope) {
+	bind := func(id *ast.Identifier) {
+		if _, dup := sc.names[id.Value]; dup {
+			c.errorf(id, "duplicate binding %s in pattern", id.Value)
+		}
+		c.mod.Bindings[id] = c.declare(sc, id.Value, false, unknown())
+	}
+	switch p := p.(type) {
+	case *ast.BindingPattern:
+		bind(p.Name)
+	case *ast.ValuePattern:
+		c.expr(p.Value, sc)
+	case *ast.ArrayPattern:
+		for _, el := range p.Elements {
+			c.pattern(el, sc)
+		}
+		if p.Rest != nil {
+			bind(p.Rest)
+		}
+	case *ast.MapPattern:
+		for i, key := range p.Keys {
+			k := c.expr(key, sc)
+			if k.Kind.Known() && k.Kind&KHash == 0 {
+				c.errorf(p, "unusable as map key: %s", k.Kind)
+			}
+			c.pattern(p.Values[i], sc)
+		}
+	}
+}
+
+func irrefutable(p ast.Pattern) bool {
+	switch p.(type) {
+	case *ast.WildcardPattern, *ast.BindingPattern:
+		return true
+	}
+	return false
 }
 
 func (c *checker) exprs(list []ast.Expression, sc *scope) []Type {

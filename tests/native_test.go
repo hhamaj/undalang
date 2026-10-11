@@ -214,6 +214,41 @@ println(counter())
 `,
 	"err_iterate": "fn it(v) { for x in v { x } }\nit(5)",
 	"err_in_loop": "let mut i = 0\nwhile true {\n    i = i + 1\n    if i == 3 { i + nil }\n}",
+	"patterns": `import "arrays" as arrays
+fn describe(v) {
+    match v {
+        0 -> "zero",
+        n if type(n) == "integer" && n < 0 -> "negative " + type(n),
+        [] -> "empty array",
+        [x] -> "one: " + type(x),
+        [first, ..rest] -> "first " + type(first) + " rest " + type(rest) + " " + type(len(rest)),
+        {"name": name, "age": age} if age >= 18 -> name + " (adult)",
+        {"name": name} -> name,
+        {} -> "some map",
+        s if type(s) == "string" -> "string " + s,
+        _ -> "other",
+    }
+}
+for v in [0, -3, [], [1], [1, 2, 3], {"name": "Ada", "age": 36}, {"name": "Bo", "age": 5}, {"x": 1}, "hi", 4.5] {
+    println(describe(v))
+}
+println(match [1, [2, 3]] { [a, [b, c]] -> a + b + c })
+println(match [1, 2, 3] { [a, ..] -> a }, match [1, 2, 3] { [_, ..tail] -> tail })
+println(match {"k": [1, {"deep": "yes"}]} { {"k": [_, {"deep": d}]} -> d })
+println(match 5 { 1 -> "one" })
+println(match "x" { "x" if false -> "guarded", "x" -> "plain" })
+let limit = 3
+println(match 3 { x if x == limit -> "equals limit", _ -> "no" })
+let mut adders = []
+for n in [1, 2] {
+    adders = arrays.append(adders, match n { k -> fn(v) { v + k } })
+}
+println(adders[0](10), adders[1](10))
+fn sum(xs) { match xs { [] -> 0, [h, ..t] -> h + sum(t) } }
+println(sum([1, 2, 3, 4]))
+`,
+	"err_pattern_key": "fn k(key) { match {} { {key: v} -> v } }\nk([1])",
+	"err_guard":       "match [1] { n if n > 0 -> n }",
 	"err_type_mismatch": `fn f(v) { return v + "a" }
 println("start")
 f(1)`,

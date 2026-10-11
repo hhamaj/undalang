@@ -86,10 +86,20 @@ func walk(n ast.Node, visit func(ast.Node) bool) bool {
 	case *ast.MatchExpression:
 		addExpr(n.Value)
 		for _, arm := range n.Arms {
-			if !arm.Wildcard {
-				addExpr(arm.Pattern)
-			}
+			children = append(children, arm.Pattern)
+			addExpr(arm.Guard)
 			addExpr(arm.Value)
+		}
+	case *ast.ValuePattern:
+		addExpr(n.Value)
+	case *ast.ArrayPattern:
+		for _, el := range n.Elements {
+			children = append(children, el)
+		}
+	case *ast.MapPattern:
+		for i := range n.Keys {
+			addExpr(n.Keys[i])
+			children = append(children, n.Values[i])
 		}
 	}
 	for _, c := range children {
