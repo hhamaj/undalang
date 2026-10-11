@@ -46,7 +46,7 @@ s.upper(5)`, []string{"2:3 strings.upper argument 1 must be STRING, got INTEGER"
 "a" |> s.split`, []string{"2:5 strings.split expects 2 arguments, got 1"}},
 		{"unknown member", `import "strings" as s
 s.missing`, []string{`2:2 module "strings" has no member "missing"`}},
-		{"member on map", "let m = {}\nm.x", []string{"2:2 member access expects module, got MAP"}},
+		{"member on int", "let n = 1\nn.x", []string{"2:2 member access expects module or map, got INTEGER"}},
 		{"bad map key", "{[1]: 2}", []string{"1:1 unusable as map key: ARRAY"}},
 		{"bad index", `[1]["a"]`, []string{"1:4 index operator not supported: ARRAY[STRING]"}},
 		{"return type flows", "fn f() { return 1 }\nlet s = len(\"ab\") + \"x\"", []string{"2:19 type mismatch: INTEGER + STRING"}},
@@ -86,6 +86,7 @@ func TestSemanticAcceptsDynamicCode(t *testing.T) {
 		"match and if":      "let v = match 1 { 1 -> \"a\", _ -> 2 }\nif v { 1 } else { 2 }",
 		"loops":             "let mut n = 0\nwhile n < 3 { n = n + 1\nif n == 2 { continue }\nbreak }\nfor i, c in \"ab\" { n = n + i }",
 		"patterns":          "match [1, {\"a\": 2}] { [x, {\"a\": y}] if x < y -> x + y, [_, ..rest] -> rest, _ -> nil }",
+		"map members":       "let m = {\"name\": \"unda\"}\nm.name\nm.missing",
 		"comments":          "// header\nlet a = 1 // trailing\n// footer",
 	}
 	for name, src := range tests {

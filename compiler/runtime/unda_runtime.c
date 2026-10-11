@@ -781,7 +781,11 @@ static void u_iter(UValue v, int vars, UArr **first, UArr **second) {
 }
 
 static UValue u_member(UValue obj, const char *name) {
-    if (obj.tag != U_MOD) u_panic("member access expects module, got %s", u_type_name(obj));
+    if (obj.tag == U_MAP) {
+        int64_t idx = u_map_find(obj.as.m, uv_cstr(name));
+        return idx < 0 ? uv_nil() : obj.as.m->entries[idx].value;
+    }
+    if (obj.tag != U_MOD) u_panic("member access expects module or map, got %s", u_type_name(obj));
     UMod *m = obj.as.mod;
     for (int i = 0; i < m->count; i++)
         if (strcmp(m->names[i], name) == 0) return m->values[i];

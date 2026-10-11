@@ -726,8 +726,11 @@ func (c *checker) member(e *ast.MemberExpression, obj Type) Type {
 	if !obj.Kind.Known() {
 		return unknown()
 	}
+	if obj.Kind == KMap {
+		return unknown()
+	}
 	if obj.Kind != KModule {
-		c.errorf(e, "member access expects module, got %s", obj.Kind)
+		c.errorf(e, "member access expects module or map, got %s", obj.Kind)
 		return unknown()
 	}
 	if obj.Module == nil {

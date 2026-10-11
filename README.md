@@ -66,6 +66,8 @@ let double = fn(x) { return x * 2 }
 
 Comments start with `//` and run to the end of the line.
 
+`m.key` reads a string key from a map, like `m["key"]`; missing keys give `nil`.
+
 Unda supports arrays, maps, indexing, `if`, and `match`. Strings are indexed by character: `len("çay")` is 3 and `"çay"[0]` is `"ç"`.
 
 ```unda

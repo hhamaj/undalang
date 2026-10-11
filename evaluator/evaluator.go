@@ -555,10 +555,19 @@ func evalIndexExpression(left, index object.Object) object.Object {
 	}
 }
 
+// evalMemberExpression handles module members and `m.key`, which reads the
+// string key from a map like m["key"].
 func evalMemberExpression(obj object.Object, property string) object.Object {
+	if m, ok := obj.(*object.Map); ok {
+		key := &object.String{Value: property}
+		if pair, ok := m.Pairs[key.HashKey()]; ok {
+			return pair.Value
+		}
+		return nilObj
+	}
 	module, ok := obj.(*object.Module)
 	if !ok {
-		return newError("member access expects module, got %s", obj.Type())
+		return newError("member access expects module or map, got %s", obj.Type())
 	}
 	value, ok := module.Members[property]
 	if !ok {
