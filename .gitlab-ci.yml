@@ -1,0 +1,8 @@
+image: golang:1.22
+
+test:
+  script:
+    - test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+    - go vet ./...
+    - go test ./...
+    - UNDA_TEST_GC_THRESHOLD=1 go test ./tests/ -run 'NativeMatches|NativeLocal|NativeExamples' -count=1
