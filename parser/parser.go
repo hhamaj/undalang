@@ -129,11 +129,65 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseReturnStatement()
 	case p.curTokenIs(token.Import):
 		return p.parseImportStatement()
+	case p.curTokenIs(token.While):
+		return p.parseWhileStatement()
+	case p.curTokenIs(token.For):
+		return p.parseForStatement()
+	case p.curTokenIs(token.Break):
+		stmt := &ast.BreakStatement{Token: p.curToken}
+		p.skipSemicolon()
+		return stmt
+	case p.curTokenIs(token.Continue):
+		stmt := &ast.ContinueStatement{Token: p.curToken}
+		p.skipSemicolon()
+		return stmt
 	case p.curTokenIs(token.Ident) && p.peekTokenIs(token.Assign):
 		return p.parseAssignStatement()
 	default:
 		return p.parseExpressionStatement()
 	}
+}
+
+func (p *Parser) skipSemicolon() {
+	if p.peekTokenIs(token.Semicolon) {
+		p.nextToken()
+	}
+}
+
+func (p *Parser) parseWhileStatement() ast.Statement {
+	stmt := &ast.WhileStatement{Token: p.curToken}
+	p.nextToken()
+	stmt.Condition = p.parseExpression(lowest)
+	if stmt.Condition == nil || !p.expectPeek(token.LBrace) {
+		return nil
+	}
+	stmt.Body = p.parseBlockStatement()
+	return stmt
+}
+
+func (p *Parser) parseForStatement() ast.Statement {
+	stmt := &ast.ForStatement{Token: p.curToken}
+	if !p.expectPeek(token.Ident) {
+		return nil
+	}
+	stmt.Vars = append(stmt.Vars, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+	if p.peekTokenIs(token.Comma) {
+		p.nextToken()
+		if !p.expectPeek(token.Ident) {
+			return nil
+		}
+		stmt.Vars = append(stmt.Vars, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+	}
+	if !p.expectPeek(token.In) {
+		return nil
+	}
+	p.nextToken()
+	stmt.Iterable = p.parseExpression(lowest)
+	if stmt.Iterable == nil || !p.expectPeek(token.LBrace) {
+		return nil
+	}
+	stmt.Body = p.parseBlockStatement()
+	return stmt
 }
 
 func (p *Parser) parseImportStatement() *ast.ImportStatement {

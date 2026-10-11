@@ -42,6 +42,7 @@ const (
 	Semicolon = ";"
 	Colon     = ":"
 	Dot       = "."
+	DotDot    = ".."
 
 	LParen   = "("
 	RParen   = ")"
@@ -62,21 +63,31 @@ const (
 	Import   = "IMPORT"
 	As       = "AS"
 	Match    = "MATCH"
+	While    = "WHILE"
+	For      = "FOR"
+	In       = "IN"
+	Break    = "BREAK"
+	Continue = "CONTINUE"
 )
 
 var keywords = map[string]Type{
-	"fn":     Function,
-	"let":    Let,
-	"mut":    Mut,
-	"true":   True,
-	"false":  False,
-	"if":     If,
-	"else":   Else,
-	"return": Return,
-	"nil":    Nil,
-	"import": Import,
-	"as":     As,
-	"match":  Match,
+	"fn":       Function,
+	"let":      Let,
+	"mut":      Mut,
+	"true":     True,
+	"false":    False,
+	"if":       If,
+	"else":     Else,
+	"return":   Return,
+	"nil":      Nil,
+	"import":   Import,
+	"as":       As,
+	"match":    Match,
+	"while":    While,
+	"for":      For,
+	"in":       In,
+	"break":    Break,
+	"continue": Continue,
 }
 
 func LookupIdent(ident string) Type {

@@ -152,6 +152,68 @@ print(shell.run("echo hi; echo err 1>&2"))
 print(process.run("printf", "%s-%s", "a", "b"))
 println(process.env("UNDA_TEST_UNSET_VARIABLE") == "")
 `,
+	"loops": `// comments are ignored
+import "arrays" as arrays
+let mut i = 0 // trailing comment
+while i < 6 {
+    i = i + 1
+    if i == 2 { continue }
+    if i == 5 { break }
+    print(i, "")
+}
+println()
+for x in [10, 20] { print(x, "") }
+for i, x in ["a", "b"] { print(i, x, "") }
+for k in {"b": 2, "a": 1} { print(k, "") }
+for k, v in {"b": 2, "a": 1, 3: nil} { print(k, v, "") }
+for c in "héllo" { print(c, "") }
+for i, c in "ğü" { print(i, c, "") }
+println()
+
+// closures capture each iteration's bindings
+let mut fns = []
+for n in [1, 2, 3] {
+    let doubled = n * 2
+    fns = arrays.append(fns, fn() { n + doubled })
+}
+println(arrays.map(fns, fn(f) { f() }))
+let mut j = 0
+let mut ws = []
+while j < 3 {
+    let snapshot = j
+    ws = arrays.append(ws, fn() { snapshot })
+    j = j + 1
+}
+println(arrays.map(ws, fn(f) { f() }))
+
+// nested loops, break inside if/match expressions, return from loops
+let mut pairs = []
+for a in arrays.range(0, 4) {
+    for b in arrays.range(0, 4) {
+        if b > a { break }
+        let skip = match b { 1 -> if true { continue }, _ -> false }
+        pairs = arrays.append(pairs, [a, b])
+    }
+}
+println(pairs)
+fn find(xs, target) {
+    for i, x in xs { if x == target { return i } }
+    return -1
+}
+println(find(["x", "y", "z"], "z"), find([], 1))
+let mut total = 0
+for x in arrays.range(0, 100000) { total = total + x }
+println(total, 1 + if true { 5 } else { 0 })
+fn counter() {
+    let mut count = 0
+    let inc = fn() { count = count + 1 }
+    for _x in [1, 2, 3] { inc() }
+    return count
+}
+println(counter())
+`,
+	"err_iterate": "fn it(v) { for x in v { x } }\nit(5)",
+	"err_in_loop": "let mut i = 0\nwhile true {\n    i = i + 1\n    if i == 3 { i + nil }\n}",
 	"err_type_mismatch": `fn f(v) { return v + "a" }
 println("start")
 f(1)`,

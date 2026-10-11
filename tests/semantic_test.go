@@ -52,6 +52,12 @@ s.missing`, []string{`2:2 module "strings" has no member "missing"`}},
 		{"return type flows", "fn f() { return 1 }\nlet s = len(\"ab\") + \"x\"", []string{"2:19 type mismatch: INTEGER + STRING"}},
 		{"inside function", "fn f() { return nope }", []string{"1:17 identifier not found: nope"}},
 		{"several", "a\nb", []string{"1:1 identifier not found: a", "2:1 identifier not found: b"}},
+		{"break outside loop", "break", []string{"1:1 break outside loop"}},
+		{"continue in nested fn", "while true { let f = fn() { continue } }", []string{"1:29 continue outside loop"}},
+		{"iterate int", "for x in 5 { x }", []string{"1:10 cannot iterate over INTEGER"}},
+		{"loop var immutable", "for x in [1] { x = 2 }", []string{`1:16 cannot assign to immutable binding "x"`}},
+		{"loop var scope", "for x in [1] { x }\nx", []string{"2:1 identifier not found: x"}},
+		{"duplicate loop var", "for x, x in [1] { x }", []string{"1:8 duplicate loop variable x"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,6 +81,8 @@ func TestSemanticAcceptsDynamicCode(t *testing.T) {
 		"logical ops":       "true && 1\nnil || \"x\"",
 		"param shadows":     "fn f(x) { let x = x + 1\nx }",
 		"match and if":      "let v = match 1 { 1 -> \"a\", _ -> 2 }\nif v { 1 } else { 2 }",
+		"loops":             "let mut n = 0\nwhile n < 3 { n = n + 1\nif n == 2 { continue }\nbreak }\nfor i, c in \"ab\" { n = n + i }",
+		"comments":          "// header\nlet a = 1 // trailing\n// footer",
 	}
 	for name, src := range tests {
 		t.Run(name, func(t *testing.T) {

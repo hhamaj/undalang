@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"undalang/ast"
@@ -17,9 +18,11 @@ import (
 )
 
 var (
-	trueObj  = &object.Boolean{Value: true}
-	falseObj = &object.Boolean{Value: false}
-	nilObj   = &object.Nil{}
+	trueObj        = &object.Boolean{Value: true}
+	falseObj       = &object.Boolean{Value: false}
+	nilObj         = &object.Nil{}
+	breakSignal    = &object.BreakSignal{}
+	continueSignal = &object.ContinueSignal{}
 )
 
 // MaxCallDepth bounds Unda-level recursion so runaway programs report an
@@ -77,30 +80,38 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		return evalProgram(node, env, ctx)
 	case *ast.ExpressionStatement:
 		return EvalWithContext(node.Expression, env, ctx)
+	case *ast.WhileStatement:
+		return evalWhileStatement(node, env, ctx)
+	case *ast.ForStatement:
+		return evalForStatement(node, env, ctx)
+	case *ast.BreakStatement:
+		return breakSignal
+	case *ast.ContinueStatement:
+		return continueSignal
 	case *ast.BlockStatement:
 		return evalBlockStatement(node, object.NewEnclosedEnvironment(env), ctx)
 	case *ast.LetStatement:
 		val := EvalWithContext(node.Value, env, ctx)
-		if isError(val) {
+		if isAbrupt(val) {
 			return val
 		}
 		env.Define(node.Name.Value, val, node.Mutable)
 		return val
 	case *ast.AssignStatement:
 		val := EvalWithContext(node.Value, env, ctx)
-		if isError(val) {
+		if isAbrupt(val) {
 			return val
 		}
 		return env.Assign(node.Name.Value, val)
 	case *ast.ReturnStatement:
 		val := EvalWithContext(node.ReturnValue, env, ctx)
-		if isError(val) {
+		if isAbrupt(val) {
 			return val
 		}
 		return &object.ReturnValue{Value: val}
 	case *ast.ImportStatement:
 		module := evalImportStatement(node, ctx)
-		if isError(module) {
+		if isAbrupt(module) {
 			return module
 		}
 		alias := node.Path.Value
@@ -123,13 +134,13 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		return nilObj
 	case *ast.PrefixExpression:
 		right := EvalWithContext(node.Right, env, ctx)
-		if isError(right) {
+		if isAbrupt(right) {
 			return right
 		}
 		return evalPrefixExpression(node.Operator, right)
 	case *ast.InfixExpression:
 		left := EvalWithContext(node.Left, env, ctx)
-		if isError(left) {
+		if isAbrupt(left) {
 			return left
 		}
 		if node.Operator == "&&" && !isTruthy(left) {
@@ -139,13 +150,13 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 			return trueObj
 		}
 		right := EvalWithContext(node.Right, env, ctx)
-		if isError(right) {
+		if isAbrupt(right) {
 			return right
 		}
 		return evalInfixExpression(node.Operator, left, right)
 	case *ast.PipelineExpression:
 		left := EvalWithContext(node.Left, env, ctx)
-		if isError(left) {
+		if isAbrupt(left) {
 			return left
 		}
 		return evalPipelineExpression(left, node.Right, env, ctx)
@@ -157,7 +168,7 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		return &object.Function{Parameters: node.Parameters, Body: node.Body, Env: env, Name: node.Name, File: ctx.File, BaseDir: ctx.BaseDir}
 	case *ast.ArrayLiteral:
 		elements := evalExpressions(node.Elements, env, ctx)
-		if len(elements) == 1 && isError(elements[0]) {
+		if len(elements) == 1 && isAbrupt(elements[0]) {
 			return elements[0]
 		}
 		return &object.Array{Elements: elements}
@@ -165,17 +176,17 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		return evalMapLiteral(node, env, ctx)
 	case *ast.IndexExpression:
 		left := EvalWithContext(node.Left, env, ctx)
-		if isError(left) {
+		if isAbrupt(left) {
 			return left
 		}
 		index := EvalWithContext(node.Index, env, ctx)
-		if isError(index) {
+		if isAbrupt(index) {
 			return index
 		}
 		return evalIndexExpression(left, index)
 	case *ast.MemberExpression:
 		obj := EvalWithContext(node.Object, env, ctx)
-		if isError(obj) {
+		if isAbrupt(obj) {
 			return obj
 		}
 		return evalMemberExpression(obj, node.Property.Value)
@@ -183,11 +194,11 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		return evalMatchExpression(node, env, ctx)
 	case *ast.CallExpression:
 		fn := EvalWithContext(node.Function, env, ctx)
-		if isError(fn) {
+		if isAbrupt(fn) {
 			return fn
 		}
 		args := evalExpressions(node.Arguments, env, ctx)
-		if len(args) == 1 && isError(args[0]) {
+		if len(args) == 1 && isAbrupt(args[0]) {
 			return args[0]
 		}
 		return applyFunctionWithContext(fn, args, ctx)
@@ -206,6 +217,8 @@ func evalProgram(program *ast.Program, env *object.Environment, ctx *Context) ob
 			return result.Value
 		case *object.Error:
 			return result
+		case *object.BreakSignal, *object.ContinueSignal:
+			return newError("%s outside loop", result.Inspect())
 		}
 	}
 
@@ -217,15 +230,109 @@ func evalBlockStatement(block *ast.BlockStatement, env *object.Environment, ctx 
 
 	for _, statement := range block.Statements {
 		result = EvalWithContext(statement, env, ctx)
-		if result != nil {
-			rt := result.Type()
-			if rt == object.ReturnValueObj || rt == object.ErrorObj {
-				return result
-			}
+		if isAbrupt(result) {
+			return result
 		}
 	}
 
 	return result
+}
+
+// loopControl interprets a loop body's result. It reports whether the loop
+// should stop and, if so, the value the loop statement evaluates to.
+func loopControl(result object.Object) (stop bool, value object.Object) {
+	switch result.(type) {
+	case *object.BreakSignal:
+		return true, nilObj
+	case *object.ContinueSignal:
+		return false, nil
+	case *object.ReturnValue, *object.Error:
+		return true, result
+	}
+	return false, nil
+}
+
+func evalWhileStatement(node *ast.WhileStatement, env *object.Environment, ctx *Context) object.Object {
+	for {
+		condition := EvalWithContext(node.Condition, env, ctx)
+		if isAbrupt(condition) {
+			return condition
+		}
+		if !isTruthy(condition) {
+			return nilObj
+		}
+		if stop, value := loopControl(EvalWithContext(node.Body, env, ctx)); stop {
+			return value
+		}
+	}
+}
+
+func evalForStatement(node *ast.ForStatement, env *object.Environment, ctx *Context) object.Object {
+	iterable := EvalWithContext(node.Iterable, env, ctx)
+	if isAbrupt(iterable) {
+		return iterable
+	}
+	first, second, err := IterationItems(iterable, len(node.Vars))
+	if err != nil {
+		return err
+	}
+	for i := range first {
+		// Each iteration gets fresh bindings so closures capture that
+		// iteration's values.
+		loopEnv := object.NewEnclosedEnvironment(env)
+		loopEnv.Define(node.Vars[0].Value, first[i], false)
+		if len(node.Vars) == 2 {
+			loopEnv.Define(node.Vars[1].Value, second[i], false)
+		}
+		if stop, value := loopControl(EvalWithContext(node.Body, loopEnv, ctx)); stop {
+			return value
+		}
+	}
+	return nilObj
+}
+
+// IterationItems lists what a for loop binds. With one variable: array
+// elements, map keys (ordered like maps.keys) or string characters. With
+// two: index/key in first and the element/value in second.
+func IterationItems(iterable object.Object, vars int) (first, second []object.Object, err *object.Error) {
+	switch it := iterable.(type) {
+	case *object.Array:
+		if vars == 1 {
+			return it.Elements, nil, nil
+		}
+		for i, el := range it.Elements {
+			first = append(first, &object.Integer{Value: int64(i)})
+			second = append(second, el)
+		}
+	case *object.Map:
+		pairs := make([]object.MapPair, 0, len(it.Pairs))
+		for _, pair := range it.Pairs {
+			pairs = append(pairs, pair)
+		}
+		sort.Slice(pairs, func(i, j int) bool { return pairs[i].Key.Inspect() < pairs[j].Key.Inspect() })
+		for _, pair := range pairs {
+			first = append(first, pair.Key)
+			second = append(second, pair.Value)
+		}
+		if vars == 1 {
+			second = nil
+		}
+	case *object.String:
+		i := 0
+		for _, r := range it.Value {
+			char := &object.String{Value: string(r)}
+			if vars == 1 {
+				first = append(first, char)
+			} else {
+				first = append(first, &object.Integer{Value: int64(i)})
+				second = append(second, char)
+			}
+			i++
+		}
+	default:
+		return nil, nil, newError("cannot iterate over %s", iterable.Type())
+	}
+	return first, second, nil
 }
 
 func evalPrefixExpression(operator string, right object.Object) object.Object {
@@ -366,7 +473,7 @@ func evalLogical(operator string, left, right object.Object) bool {
 
 func evalIfExpression(ie *ast.IfExpression, env *object.Environment, ctx *Context) object.Object {
 	condition := EvalWithContext(ie.Condition, env, ctx)
-	if isError(condition) {
+	if isAbrupt(condition) {
 		return condition
 	}
 
@@ -394,7 +501,7 @@ func evalMapLiteral(node *ast.MapLiteral, env *object.Environment, ctx *Context)
 	pairs := make(map[object.HashKey]object.MapPair)
 	for _, nodePair := range node.Pairs {
 		key := EvalWithContext(nodePair.Key, env, ctx)
-		if isError(key) {
+		if isAbrupt(key) {
 			return key
 		}
 		hashKey, ok := key.(object.Hashable)
@@ -402,7 +509,7 @@ func evalMapLiteral(node *ast.MapLiteral, env *object.Environment, ctx *Context)
 			return newError("unusable as map key: %s", key.Type())
 		}
 		value := EvalWithContext(nodePair.Value, env, ctx)
-		if isError(value) {
+		if isAbrupt(value) {
 			return value
 		}
 		pairs[hashKey.HashKey()] = object.MapPair{Key: key, Value: value}
@@ -455,7 +562,7 @@ func evalMemberExpression(obj object.Object, property string) object.Object {
 
 func evalMatchExpression(node *ast.MatchExpression, env *object.Environment, ctx *Context) object.Object {
 	value := EvalWithContext(node.Value, env, ctx)
-	if isError(value) {
+	if isAbrupt(value) {
 		return value
 	}
 	for _, arm := range node.Arms {
@@ -463,7 +570,7 @@ func evalMatchExpression(node *ast.MatchExpression, env *object.Environment, ctx
 			return EvalWithContext(arm.Value, env, ctx)
 		}
 		pattern := EvalWithContext(arm.Pattern, env, ctx)
-		if isError(pattern) {
+		if isAbrupt(pattern) {
 			return pattern
 		}
 		if objectsEqual(value, pattern) {
@@ -477,19 +584,19 @@ func evalPipelineExpression(left object.Object, right ast.Expression, env *objec
 	switch right := right.(type) {
 	case *ast.CallExpression:
 		fn := EvalWithContext(right.Function, env, ctx)
-		if isError(fn) {
+		if isAbrupt(fn) {
 			return fn
 		}
 		args := []object.Object{left}
 		more := evalExpressions(right.Arguments, env, ctx)
-		if len(more) == 1 && isError(more[0]) {
+		if len(more) == 1 && isAbrupt(more[0]) {
 			return more[0]
 		}
 		args = append(args, more...)
 		return applyFunctionWithContext(fn, args, ctx)
 	default:
 		fn := EvalWithContext(right, env, ctx)
-		if isError(fn) {
+		if isAbrupt(fn) {
 			return fn
 		}
 		return applyFunctionWithContext(fn, []object.Object{left}, ctx)
@@ -538,7 +645,7 @@ func evalImportStatement(node *ast.ImportStatement, ctx *Context) object.Object 
 	result := EvalWithContext(program, moduleEnv, ctx)
 	ctx.BaseDir, ctx.File = previousBase, previousFile
 	delete(ctx.loading, cleanPath)
-	if isError(result) {
+	if isAbrupt(result) {
 		return result
 	}
 
@@ -552,7 +659,7 @@ func evalExpressions(exps []ast.Expression, env *object.Environment, ctx *Contex
 
 	for _, e := range exps {
 		evaluated := EvalWithContext(e, env, ctx)
-		if isError(evaluated) {
+		if isAbrupt(evaluated) {
 			return []object.Object{evaluated}
 		}
 		result = append(result, evaluated)
@@ -586,8 +693,11 @@ func applyFunctionWithContext(fn object.Object, args []object.Object, ctx *Conte
 		evaluated := EvalWithContext(fn.Body, extendedEnv, ctx)
 		ctx.depth--
 		ctx.BaseDir, ctx.File = previousBase, previousFile
-		if returnValue, ok := evaluated.(*object.ReturnValue); ok {
-			return returnValue.Value
+		switch result := evaluated.(type) {
+		case *object.ReturnValue:
+			return result.Value
+		case *object.BreakSignal, *object.ContinueSignal:
+			return newError("%s outside loop", result.Inspect())
 		}
 		return evaluated
 	case *object.Builtin:
@@ -694,6 +804,16 @@ func newError(format string, a ...interface{}) *object.Error {
 func isError(obj object.Object) bool {
 	if obj != nil {
 		return obj.Type() == object.ErrorObj
+	}
+	return false
+}
+
+// isAbrupt reports values that end evaluation early: errors and the
+// return/break/continue signals. They propagate through every expression.
+func isAbrupt(obj object.Object) bool {
+	switch obj.(type) {
+	case *object.Error, *object.ReturnValue, *object.BreakSignal, *object.ContinueSignal:
+		return true
 	}
 	return false
 }

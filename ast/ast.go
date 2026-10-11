@@ -119,6 +119,54 @@ func (is *ImportStatement) String() string {
 	return out.String()
 }
 
+type WhileStatement struct {
+	Token     token.Token
+	Condition Expression
+	Body      *BlockStatement
+}
+
+func (ws *WhileStatement) statementNode()       {}
+func (ws *WhileStatement) TokenLiteral() string { return ws.Token.Literal }
+func (ws *WhileStatement) String() string {
+	return "while " + ws.Condition.String() + " { " + ws.Body.String() + " }"
+}
+
+// ForStatement iterates over an array, map or string. With one variable it
+// binds elements (array), keys (map) or characters (string); with two it
+// binds index/key and value.
+type ForStatement struct {
+	Token    token.Token
+	Vars     []*Identifier
+	Iterable Expression
+	Body     *BlockStatement
+}
+
+func (fs *ForStatement) statementNode()       {}
+func (fs *ForStatement) TokenLiteral() string { return fs.Token.Literal }
+func (fs *ForStatement) String() string {
+	names := make([]string, 0, len(fs.Vars))
+	for _, v := range fs.Vars {
+		names = append(names, v.String())
+	}
+	return "for " + strings.Join(names, ", ") + " in " + fs.Iterable.String() + " { " + fs.Body.String() + " }"
+}
+
+type BreakStatement struct {
+	Token token.Token
+}
+
+func (bs *BreakStatement) statementNode()       {}
+func (bs *BreakStatement) TokenLiteral() string { return bs.Token.Literal }
+func (bs *BreakStatement) String() string       { return "break" }
+
+type ContinueStatement struct {
+	Token token.Token
+}
+
+func (cs *ContinueStatement) statementNode()       {}
+func (cs *ContinueStatement) TokenLiteral() string { return cs.Token.Literal }
+func (cs *ContinueStatement) String() string       { return "continue" }
+
 type ExpressionStatement struct {
 	Token      token.Token
 	Expression Expression
@@ -441,6 +489,15 @@ func Position(node Node) (line, column int) {
 	case *ReturnStatement:
 		tok = n.Token
 	case *ImportStatement:
+		tok = n.Token
+	case *WhileStatement:
+		tok = n.Token
+	case *ForStatement:
+		// Errors raised by the loop itself concern the iterable.
+		return Position(n.Iterable)
+	case *BreakStatement:
+		tok = n.Token
+	case *ContinueStatement:
 		tok = n.Token
 	case *ExpressionStatement:
 		if n.Expression != nil {

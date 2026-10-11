@@ -206,20 +206,74 @@ func (f *fgen) stmt(s ast.Statement) string {
 		return f.expr(s.Expression)
 	case *ast.BlockStatement:
 		return f.block(s)
+	case *ast.WhileStatement:
+		f.line("for (;;) {")
+		f.indent++
+		cond := f.expr(s.Condition)
+		f.line("if (!u_truthy(%s)) break;", cond)
+		f.loopBody(s, s.Body, nil)
+		f.indent--
+		f.line("}")
+		return "uv_nil()"
+	case *ast.ForStatement:
+		it := f.expr(s.Iterable)
+		n := f.tmp + 1
+		f.tmp++
+		f.loc(s)
+		f.line("UArr *k%d = NULL, *v%d = NULL;", n, n)
+		f.line("u_iter(%s, %d, &k%d, &v%d);", it, len(s.Vars), n, n)
+		f.line("for (size_t i%d = 0; i%d < k%d->len; i%d++) {", n, n, n, n)
+		f.indent++
+		f.loopBody(s, s.Body, func() {
+			f.line("S[%d] = k%d->items[i%d];", f.mod.Bindings[s.Vars[0]].Slot, n, n)
+			if len(s.Vars) == 2 {
+				f.line("S[%d] = v%d->items[i%d];", f.mod.Bindings[s.Vars[1]].Slot, n, n)
+			}
+		})
+		f.indent--
+		f.line("}")
+		return "uv_nil()"
+	case *ast.BreakStatement:
+		f.line("break;")
+		return "uv_nil()"
+	case *ast.ContinueStatement:
+		f.line("continue;")
+		return "uv_nil()"
 	}
 	panic(fmt.Sprintf("cgen: unsupported statement %T", s))
 }
 
+// loopBody emits one iteration. Loops whose body creates closures get a
+// fresh heap frame per iteration; the C block shadows fr and S so the body
+// code is unchanged. Unda's break/continue map directly to C's, since the
+// generator emits no other C loops or switches.
+func (f *fgen) loopBody(loop ast.Statement, body *ast.BlockStatement, bind func()) {
+	frame := f.mod.LoopFrames[loop]
+	if frame != nil {
+		parent := f.temp()
+		f.line("UFrame *%s = fr;", parent)
+		f.line("{")
+		f.indent++
+		f.line("UFrame *fr = u_frame_new(%s, %d);", parent, frame.NumSlots)
+		f.line("UValue *S = fr->slots;")
+		f.line("(void)S;")
+	}
+	if bind != nil {
+		bind()
+	}
+	f.block(body)
+	if frame != nil {
+		f.indent--
+		f.line("}")
+	}
+}
+
 func (f *fgen) assign(s *ast.AssignStatement, v string) {
 	ref := f.mod.Assigns[s]
-	if len(ref.Candidates) == 1 && ref.Candidates[0].Depth == 0 {
-		f.line("S[%d] = %s;", ref.Candidates[0].Sym.Slot, v)
-		return
-	}
 	opened := 0
 	for i, cand := range ref.Candidates {
 		lv := f.slot(cand)
-		if cand.Depth == 0 {
+		if cand.Direct {
 			f.line("%s = %s;", lv, v)
 			break
 		}
@@ -256,7 +310,7 @@ func (f *fgen) identifier(id *ast.Identifier) string {
 		return t
 	}
 	f.line("UValue %s = %s;", t, f.slot(ref.Candidates[0]))
-	if ref.Candidates[0].Depth == 0 {
+	if ref.Candidates[0].Direct {
 		return t
 	}
 	// The binding lives in an enclosing frame and may not have been

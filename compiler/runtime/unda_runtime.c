@@ -568,6 +568,49 @@ static UValue u_index(UValue l, UValue i) {
     u_panic("index operator not supported: %s[%s]", u_type_name(l), u_type_name(i));
 }
 
+static size_t *u_sorted_entries(UMap *m);
+
+/* Lists what a for loop binds; see evaluator.IterationItems. */
+static void u_iter(UValue v, int vars, UArr **first, UArr **second) {
+    UArr *a = u_arr_new(0), *b = vars == 2 ? u_arr_new(0) : NULL;
+    switch (v.tag) {
+    case U_ARR:
+        for (size_t i = 0; i < v.as.a->len; i++) {
+            if (vars == 1) u_arr_push(a, v.as.a->items[i]);
+            else { u_arr_push(a, uv_int((int64_t)i)); u_arr_push(b, v.as.a->items[i]); }
+        }
+        break;
+    case U_MAP: {
+        size_t *idx = u_sorted_entries(v.as.m);
+        for (size_t i = 0; i < v.as.m->len; i++) {
+            u_arr_push(a, v.as.m->entries[idx[i]].key);
+            if (b) u_arr_push(b, v.as.m->entries[idx[i]].value);
+        }
+        free(idx);
+        break;
+    }
+    case U_STR: {
+        UStr *s = v.as.s;
+        int64_t n = 0;
+        for (size_t i = 0; i < s->len; n++) {
+            int size;
+            int32_t r = u_utf8_decode((const unsigned char *)s->data + i, s->len - i, &size);
+            USb sb = {0};
+            u_utf8_encode(&sb, r);
+            UValue ch = uv_sb_value(&sb);
+            if (vars == 1) u_arr_push(a, ch);
+            else { u_arr_push(a, uv_int(n)); u_arr_push(b, ch); }
+            i += (size_t)size;
+        }
+        break;
+    }
+    default:
+        u_panic("cannot iterate over %s", u_type_name(v));
+    }
+    *first = a;
+    *second = b;
+}
+
 static UValue u_member(UValue obj, const char *name) {
     if (obj.tag != U_MOD) u_panic("member access expects module, got %s", u_type_name(obj));
     UMod *m = obj.as.mod;

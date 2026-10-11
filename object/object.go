@@ -26,6 +26,8 @@ const (
 	ArrayObj       = "ARRAY"
 	MapObj         = "MAP"
 	ModuleObj      = "MODULE"
+	BreakObj       = "BREAK"
+	ContinueObj    = "CONTINUE"
 )
 
 type Object interface {
@@ -72,6 +74,18 @@ type ReturnValue struct {
 
 func (rv *ReturnValue) Type() Type      { return ReturnValueObj }
 func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
+
+// BreakSignal and ContinueSignal propagate out of a loop body like
+// ReturnValue propagates out of a function.
+type BreakSignal struct{}
+
+func (b *BreakSignal) Type() Type      { return BreakObj }
+func (b *BreakSignal) Inspect() string { return "break" }
+
+type ContinueSignal struct{}
+
+func (c *ContinueSignal) Type() Type      { return ContinueObj }
+func (c *ContinueSignal) Inspect() string { return "continue" }
 
 type Error struct {
 	Message string

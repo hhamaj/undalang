@@ -39,9 +39,12 @@ type Symbol struct {
 }
 
 // Candidate is a binding an identifier may refer to, Depth frames up.
+// Direct candidates are resolved in execution order within the same
+// function, so they are always initialized when read.
 type Candidate struct {
-	Sym   *Symbol
-	Depth int
+	Sym    *Symbol
+	Depth  int
+	Direct bool
 }
 
 // Ref is a resolved identifier. Candidates are ordered nearest first. A
@@ -54,15 +57,24 @@ type Ref struct {
 	Builtin    string
 }
 
-// FuncInfo describes one frame: a function literal or a module's top level.
+// FuncInfo describes one frame: a function literal, a module's top level,
+// or a loop body that creates closures (each iteration then gets its own
+// frame so closures capture that iteration's bindings).
 type FuncInfo struct {
 	ID         int
 	Lit        *ast.FunctionLiteral
+	Parent     *FuncInfo
 	Level      int
 	NumSlots   int
 	ParamSlots []int
 	// HeapFrame is set when a closure may capture this frame.
 	HeapFrame bool
+}
+
+func (fn *FuncInfo) markHeap() {
+	for f := fn; f != nil && !f.HeapFrame; f = f.Parent {
+		f.HeapFrame = true
+	}
 }
 
 type Import struct {
@@ -84,9 +96,14 @@ type Module struct {
 	Refs    map[*ast.Identifier]*Ref
 	Assigns map[*ast.AssignStatement]*Ref
 	Decls   map[ast.Statement]*Symbol
-	Imports map[*ast.ImportStatement]*Import
-	Exports []*Symbol
-	Type    *ModuleType
+	// Bindings maps identifiers introduced by for loops and match patterns.
+	Bindings map[*ast.Identifier]*Symbol
+	// LoopFrames holds the per-iteration frame of loops whose body creates
+	// closures.
+	LoopFrames map[ast.Statement]*FuncInfo
+	Imports    map[*ast.ImportStatement]*Import
+	Exports    []*Symbol
+	Type       *ModuleType
 }
 
 type Program struct {
@@ -176,6 +193,9 @@ func (a *analyzer) loadSource(path, file, dir, source string) *Module {
 		Assigns: map[*ast.AssignStatement]*Ref{},
 		Decls:   map[ast.Statement]*Symbol{},
 		Imports: map[*ast.ImportStatement]*Import{},
+
+		Bindings:   map[*ast.Identifier]*Symbol{},
+		LoopFrames: map[ast.Statement]*FuncInfo{},
 	}
 	if path != "" {
 		a.loading[path] = true
@@ -206,6 +226,9 @@ type scope struct {
 	parent *scope
 	names  map[string]*Symbol
 	fn     *FuncInfo
+	// boundary marks a function's parameter scope; names found beyond it are
+	// read when the function runs, not in statement order.
+	boundary bool
 }
 
 func newScope(parent *scope, fn *FuncInfo) *scope {
@@ -222,10 +245,11 @@ type checker struct {
 	mod   *Module
 	queue []pending
 	diags []diag.Diagnostic
+	loops int
 }
 
 func (c *checker) run() {
-	top := c.newFunc(nil, 0)
+	top := c.newFunc(nil, nil)
 	c.mod.Top = top
 	sc := newScope(nil, top)
 	for _, stmt := range c.mod.Program.Statements {
@@ -253,8 +277,12 @@ func (c *checker) run() {
 	c.a.prog.Diagnostics = append(c.a.prog.Diagnostics, c.diags...)
 }
 
-func (c *checker) newFunc(lit *ast.FunctionLiteral, level int) *FuncInfo {
-	fn := &FuncInfo{ID: c.a.nextFn, Lit: lit, Level: level}
+func (c *checker) newFunc(lit *ast.FunctionLiteral, parent *FuncInfo) *FuncInfo {
+	level := 0
+	if parent != nil {
+		level = parent.Level + 1
+	}
+	fn := &FuncInfo{ID: c.a.nextFn, Lit: lit, Parent: parent, Level: level}
 	c.a.nextFn++
 	if lit != nil {
 		c.mod.Funcs = append(c.mod.Funcs, fn)
@@ -271,11 +299,15 @@ func (c *checker) errorf(node ast.Node, format string, args ...interface{}) {
 func (c *checker) function(p pending) {
 	lit := p.fn.Lit
 	params := newScope(p.scope, p.fn)
+	params.boundary = true
 	for _, param := range lit.Parameters {
 		sym := c.declare(params, param.Value, false, unknown())
 		p.fn.ParamSlots = append(p.fn.ParamSlots, sym.Slot)
 	}
+	outerLoops := c.loops
+	c.loops = 0
 	c.block(lit.Body, newScope(params, p.fn))
+	c.loops = outerLoops
 }
 
 func (c *checker) declare(sc *scope, name string, mutable bool, t Type) *Symbol {
@@ -294,21 +326,22 @@ func (c *checker) declare(sc *scope, name string, mutable bool, t Type) *Symbol 
 	return sym
 }
 
-// lookup collects the bindings name may refer to from sc outward. A binding
-// in the current frame is always initialized (statements run in order), so
-// the search stops there.
+// lookup collects the bindings name may refer to from sc outward. Bindings
+// found before crossing a function boundary were declared earlier in
+// execution order, so they are initialized and the search stops there.
 func lookup(sc *scope, name string) []Candidate {
 	var out []Candidate
 	level := sc.fn.Level
+	crossed := false
 	for s := sc; s != nil; s = s.parent {
-		sym, ok := s.names[name]
-		if !ok {
-			continue
+		if sym, ok := s.names[name]; ok {
+			out = append(out, Candidate{Sym: sym, Depth: level - sym.Level, Direct: !crossed})
+			if !crossed {
+				break
+			}
 		}
-		depth := level - sym.Level
-		out = append(out, Candidate{Sym: sym, Depth: depth})
-		if depth == 0 {
-			break
+		if s.boundary {
+			crossed = true
 		}
 	}
 	return out
@@ -345,10 +378,55 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 		return t
 	case *ast.ExpressionStatement:
 		return c.expr(s.Expression, sc)
+	case *ast.WhileStatement:
+		c.expr(s.Condition, sc)
+		body := c.loopScope(s, s.Body, sc)
+		c.loops++
+		c.block(s.Body, body)
+		c.loops--
+		return kindType(KNil)
+	case *ast.ForStatement:
+		t := c.expr(s.Iterable, sc)
+		if t.Kind.Known() && t.Kind&(KArray|KMap|KString) == 0 {
+			c.errorf(s, "cannot iterate over %s", t.Kind)
+		}
+		vars := c.loopScope(s, s.Body, sc)
+		for _, v := range s.Vars {
+			if _, dup := vars.names[v.Value]; dup {
+				c.errorf(v, "duplicate loop variable %s", v.Value)
+			}
+			c.mod.Bindings[v] = c.declare(vars, v.Value, false, unknown())
+		}
+		c.loops++
+		c.block(s.Body, newScope(vars, vars.fn))
+		c.loops--
+		return kindType(KNil)
+	case *ast.BreakStatement:
+		if c.loops == 0 {
+			c.errorf(s, "break outside loop")
+		}
+		return kindType(KNever)
+	case *ast.ContinueStatement:
+		if c.loops == 0 {
+			c.errorf(s, "continue outside loop")
+		}
+		return kindType(KNever)
 	case *ast.BlockStatement:
 		return c.block(s, newScope(sc, sc.fn))
 	}
 	return unknown()
+}
+
+// loopScope returns the scope a loop body's bindings live in. When the body
+// creates closures, it is a fresh frame per iteration.
+func (c *checker) loopScope(loop ast.Statement, body *ast.BlockStatement, sc *scope) *scope {
+	if !containsFunction(body) {
+		return newScope(sc, sc.fn)
+	}
+	frame := c.newFunc(nil, sc.fn)
+	frame.HeapFrame = true
+	c.mod.LoopFrames[loop] = frame
+	return newScope(sc, frame)
 }
 
 func (c *checker) assign(s *ast.AssignStatement, sc *scope) {
@@ -362,7 +440,7 @@ func (c *checker) assign(s *ast.AssignStatement, sc *scope) {
 	for _, cand := range cands {
 		anyMutable = anyMutable || cand.Sym.Mutable
 	}
-	if !anyMutable || (cands[0].Depth == 0 && !cands[0].Sym.Mutable) {
+	if !anyMutable || (cands[0].Direct && !cands[0].Sym.Mutable) {
 		c.errorf(s, "cannot assign to immutable binding %q", name)
 	}
 	c.mod.Assigns[s] = &Ref{Name: name, Candidates: cands}
@@ -466,8 +544,8 @@ func (c *checker) expr(e ast.Expression, sc *scope) Type {
 		}
 		return join(t, kindType(KNil))
 	case *ast.FunctionLiteral:
-		fn := c.newFunc(e, sc.fn.Level+1)
-		sc.fn.HeapFrame = true
+		fn := c.newFunc(e, sc.fn)
+		sc.fn.markHeap()
 		c.queue = append(c.queue, pending{fn: fn, scope: sc})
 		return Type{Kind: KFunction, Arity: len(e.Parameters)}
 	case *ast.ArrayLiteral:
@@ -519,7 +597,7 @@ func (c *checker) exprs(list []ast.Expression, sc *scope) []Type {
 
 func (c *checker) identifier(id *ast.Identifier, sc *scope) Type {
 	ref := &Ref{Name: id.Value, Candidates: lookup(sc, id.Value)}
-	direct := len(ref.Candidates) > 0 && ref.Candidates[len(ref.Candidates)-1].Depth == 0
+	direct := len(ref.Candidates) > 0 && ref.Candidates[len(ref.Candidates)-1].Direct
 	if _, ok := GlobalBuiltins[id.Value]; ok && !direct {
 		ref.Builtin = id.Value
 	}

@@ -96,8 +96,12 @@ func (l *Lexer) NextToken() token.Token {
 		tok = l.newToken(token.Colon, l.ch)
 		l.readChar()
 	case '.':
-		tok = l.newToken(token.Dot, l.ch)
-		l.readChar()
+		if l.peekChar() == '.' {
+			tok = l.twoCharToken(token.DotDot)
+		} else {
+			tok = l.newToken(token.Dot, l.ch)
+			l.readChar()
+		}
 	case '(':
 		tok = l.newToken(token.LParen, l.ch)
 		l.readChar()
@@ -164,9 +168,19 @@ func (l *Lexer) peekChar() byte {
 	return l.input[l.readPosition]
 }
 
+// skipWhitespace also skips `//` line comments.
 func (l *Lexer) skipWhitespace() {
-	for l.ch == ' ' || l.ch == '\t' || l.ch == '\n' || l.ch == '\r' {
-		l.readChar()
+	for {
+		switch {
+		case l.ch == ' ' || l.ch == '\t' || l.ch == '\n' || l.ch == '\r':
+			l.readChar()
+		case l.ch == '/' && l.peekChar() == '/':
+			for l.ch != '\n' && l.ch != 0 {
+				l.readChar()
+			}
+		default:
+			return
+		}
 	}
 }
 
