@@ -21,6 +21,10 @@ var (
 	nilObj   = &object.Nil{}
 )
 
+// MaxCallDepth bounds Unda-level recursion so runaway programs report an
+// error instead of exhausting the host stack.
+const MaxCallDepth = 10000
+
 func Eval(node ast.Node, env *object.Environment, out io.Writer) object.Object {
 	ctx := NewContext("", out)
 	return EvalWithContext(node, env, ctx)
@@ -32,6 +36,7 @@ type Context struct {
 	loading  map[string]bool
 	modules  map[string]*object.Module
 	builtins map[string]*object.Builtin
+	depth    int
 }
 
 func NewContext(baseDir string, out io.Writer) *Context {
@@ -549,11 +554,16 @@ func applyFunctionWithContext(fn object.Object, args []object.Object, ctx *Conte
 		if len(args) != len(fn.Parameters) {
 			return newError("wrong number of arguments: expected %d, got %d", len(fn.Parameters), len(args))
 		}
+		if ctx.depth >= MaxCallDepth {
+			return newError("maximum call depth exceeded")
+		}
 		extendedEnv := object.NewEnclosedEnvironment(fn.Env)
 		for paramIdx, param := range fn.Parameters {
 			extendedEnv.Define(param.Value, args[paramIdx], false)
 		}
+		ctx.depth++
 		evaluated := EvalWithContext(fn.Body, extendedEnv, ctx)
+		ctx.depth--
 		if returnValue, ok := evaluated.(*object.ReturnValue); ok {
 			return returnValue.Value
 		}
