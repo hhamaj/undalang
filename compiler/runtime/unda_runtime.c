@@ -25,7 +25,7 @@
 #include <time.h>
 #include <unistd.h>
 
-typedef enum { U_UNDEF = 0, U_NIL, U_BOOL, U_INT, U_FLOAT, U_STR, U_ARR, U_MAP, U_FN, U_BUILTIN, U_MOD, U_RES, U_STRUCT, U_SDEF } UTag;
+typedef enum { U_UNDEF = 0, U_NIL, U_BOOL, U_INT, U_FLOAT, U_STR, U_ARR, U_MAP, U_FN, U_BUILTIN, U_MOD, U_RES, U_STRUCT, U_SDEF, U_PTR } UTag;
 
 typedef struct UStr { size_t len; char data[]; } UStr;
 typedef struct UArr UArr;
@@ -38,7 +38,7 @@ typedef struct UStructDef UStructDef;
 
 typedef struct UValue {
     UTag tag;
-    union { bool b; int64_t i; double f; UStr *s; UArr *a; UMap *m; UFn *fn; UMod *mod; URes *r; UStruct *st; UStructDef *sd; } as;
+    union { bool b; int64_t i; double f; UStr *s; UArr *a; UMap *m; UFn *fn; UMod *mod; URes *r; UStruct *st; UStructDef *sd; void *p; } as;
 } UValue;
 
 /*
@@ -305,6 +305,7 @@ static inline UValue uv_sb_value(USb *sb) { UValue v = uv_str_n(sb->buf ? sb->bu
 static inline UValue uv_arrv(UArr *a) { UValue v; v.tag = U_ARR; v.as.a = a; return v; }
 static inline UValue uv_mapv(UMap *m) { UValue v; v.tag = U_MAP; v.as.m = m; return v; }
 static inline UValue uv_modv(UMod *m) { UValue v; v.tag = U_MOD; v.as.mod = m; return v; }
+static inline UValue uv_ptr(void *p) { UValue v; v.tag = U_PTR; v.as.p = p; return v; }
 static UValue uv_result(bool ok, UValue inner) {
     URes *r = u_alloc(sizeof(URes));
     r->ok = ok;
@@ -374,6 +375,7 @@ static const char *u_type_name(UValue v) {
     case U_RES: return "RESULT";
     case U_STRUCT: return v.as.st->def->name;
     case U_SDEF: return "STRUCT";
+    case U_PTR: return "POINTER";
     default: return "UNDEFINED";
     }
 }
@@ -559,6 +561,7 @@ static void u_inspect_to(USb *sb, UValue v) {
         break;
     }
     case U_SDEF: sb_puts(sb, "struct "); sb_puts(sb, v.as.sd->name); break;
+    case U_PTR: sb_printf(sb, "pointer(%p)", v.as.p); break;
     default: sb_puts(sb, "<undefined>"); break;
     }
 }
@@ -684,6 +687,7 @@ static bool u_equal(UValue a, UValue b) {
             if (!u_equal(a.as.st->fields[i], b.as.st->fields[i])) return false;
         return true;
     case U_SDEF: return b.tag == U_SDEF && a.as.sd == b.as.sd;
+    case U_PTR: return b.tag == U_PTR && a.as.p == b.as.p;
     default: return false;
     }
 }
@@ -1087,6 +1091,13 @@ static const char *u_ffi_cstring(UValue v, const char *fn, int i) {
     if (v.tag != U_STR) u_panic("%s argument %d must be STRING, got %s", fn, i, u_type_name(v));
     if (memchr(v.as.s->data, 0, v.as.s->len)) u_panic("%s argument %d contains a NUL byte", fn, i);
     return v.as.s->data;
+}
+
+/* pointers only come from C and only go back to C. nil stands for NULL */
+static void *u_ffi_ptr(UValue v, const char *fn, int i) {
+    if (v.tag == U_NIL) return NULL;
+    if (v.tag != U_PTR) u_panic("%s argument %d must be POINTER, got %s", fn, i, u_type_name(v));
+    return v.as.p;
 }
 
 /* global builtins */

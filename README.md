@@ -111,7 +111,7 @@ fn add(a: int, b: int) -> int {
 let label = fn(name: string, value) -> string { name + ": " + type(value) }
 ```
 
-The types are `int`, `float`, `number` (int or float), `string`, `bool`, `nil`, `array`, `map`, `fn` (functions and builtins), `module`, `result`, `any` and the name of any struct.
+The types are `int`, `float`, `number` (int or float), `string`, `bool`, `nil`, `array`, `map`, `fn` (functions and builtins), `module`, `result`, `ptr`, `any` and the name of any struct.
 
 `unda check` reports mismatches it can prove without running the program, and typed bindings and parameters give it more to work with:
 
@@ -204,7 +204,23 @@ extern "./libgeo.so" {
 println(sqrt(pow(3, 2) + pow(4, 2)), area(3, 4))
 ```
 
-The C types are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`, `f64`, `bool` and `cstring` (a NUL-terminated `char *`; a NULL result comes back as `nil`). Leave out the return type for `void`. Arguments are converted when the call happens and must fit: an int that doesn't fit an `i32` or a negative int for a `u64` is a runtime error, not a silent truncation.
+The C types are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`, `f64`, `bool`, `cstring` (a NUL-terminated `char *`; a NULL result comes back as `nil`) and `ptr`. Leave out the return type for `void`.
+
+`ptr` is any other pointer, like a `FILE *` or a handle a library gives out. Unda code can only hold it, compare it and pass it back to C; it can't read through it or do arithmetic on it. NULL comes back as `nil`, and `nil` passed as a `ptr` is NULL. `ptr` also works as an ordinary type annotation.
+
+```unda
+extern "c" {
+    fn fopen(path: cstring, mode: cstring) -> ptr
+    fn fputs(s: cstring, f: ptr) -> i32
+    fn fclose(f: ptr) -> i32
+}
+
+let f = fopen("/tmp/out.txt", "w")
+if f == nil { println("could not open") } else {
+    fputs("hello from unda\n", f)
+    fclose(f)
+}
+``` Arguments are converted when the call happens and must fit: an int that doesn't fit an `i32` or a negative int for a `u64` is a runtime error, not a silent truncation.
 
 The library is `"c"` for libc, a name like `"m"` or `"sqlite3"` to link `-lm` / `-lsqlite3`, or a path to a `.so` or `.a` file (relative to the source file). Shared libraries given by path are found again at runtime through an rpath.
 

@@ -17,7 +17,7 @@ var runtimeSource string
 var tagNames = map[string]string{
 	"INTEGER": "U_INT", "FLOAT": "U_FLOAT", "STRING": "U_STR", "BOOLEAN": "U_BOOL", "NIL": "U_NIL",
 	"ARRAY": "U_ARR", "MAP": "U_MAP", "FUNCTION": "U_FN", "BUILTIN": "U_BUILTIN", "MODULE": "U_MOD",
-	"RESULT": "U_RES",
+	"RESULT": "U_RES", "POINTER": "U_PTR",
 }
 
 var binops = map[string]string{
@@ -82,7 +82,7 @@ type gen struct {
 var cTypeNames = map[string]string{
 	"i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
 	"u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
-	"f32": "float", "f64": "double", "bool": "bool", "cstring": "const char *",
+	"f32": "float", "f64": "double", "bool": "bool", "cstring": "const char *", "ptr": "void *",
 }
 
 // cArg is the conversion from an Unda value to a C argument of type t
@@ -95,6 +95,8 @@ func cArg(t *ast.TypeAnnotation, v, fn string, i int) string {
 		return fmt.Sprintf("u_ffi_bool(%s, %s, %d)", v, name, i)
 	case "cstring":
 		return fmt.Sprintf("u_ffi_cstring(%s, %s, %d)", v, name, i)
+	case "ptr":
+		return fmt.Sprintf("u_ffi_ptr(%s, %s, %d)", v, name, i)
 	case "u64":
 		return fmt.Sprintf("u_ffi_uint(%s, %s, %d, UINT64_MAX, \"u64\")", v, name, i)
 	case "u8", "u16", "u32":
@@ -135,6 +137,8 @@ func (g *gen) externFunc(fn *ast.ExternFunc) string {
 		result = "return uv_bool(" + call + ");"
 	case fn.Return.Name == "cstring":
 		result = "const char *r_ = " + call + ";\n    return r_ ? uv_cstr(r_) : uv_nil();"
+	case fn.Return.Name == "ptr":
+		result = "void *r_ = " + call + ";\n    return r_ ? uv_ptr(r_) : uv_nil();"
 	case fn.Return.Name == "u64":
 		result = fmt.Sprintf("uint64_t r_ = %s;\n    if (r_ > INT64_MAX) u_panic(\"%%s returned %%llu, too big for an int\", %s, (unsigned long long)r_);\n    return uv_int((int64_t)r_);", call, cString(fn.Name.Value))
 	default:

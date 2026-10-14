@@ -28,12 +28,13 @@ const (
 	KResult
 	KStruct
 	KStructDef
+	KPointer
 
 	KNever   Kind = 0
 	KNumber       = KInt | KFloat
 	KCall         = KFunction | KBuiltin
 	KHash         = KInt | KString | KBool | KNil
-	KUnknown      = KInt | KFloat | KString | KBool | KNil | KArray | KMap | KFunction | KBuiltin | KModule | KResult | KStruct | KStructDef
+	KUnknown      = KInt | KFloat | KString | KBool | KNil | KArray | KMap | KFunction | KBuiltin | KModule | KResult | KStruct | KStructDef | KPointer
 )
 
 var kindNames = []struct {
@@ -43,7 +44,7 @@ var kindNames = []struct {
 	{KInt, "INTEGER"}, {KFloat, "FLOAT"}, {KString, "STRING"}, {KBool, "BOOLEAN"},
 	{KNil, "NIL"}, {KArray, "ARRAY"}, {KMap, "MAP"}, {KFunction, "FUNCTION"},
 	{KBuiltin, "BUILTIN"}, {KModule, "MODULE"}, {KResult, "RESULT"},
-	{KStruct, "STRUCT VALUE"}, {KStructDef, "STRUCT"},
+	{KStruct, "STRUCT VALUE"}, {KStructDef, "STRUCT"}, {KPointer, "POINTER"},
 }
 
 // Known reports a single statically known kind. struct values don't count:

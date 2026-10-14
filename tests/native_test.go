@@ -562,12 +562,19 @@ func TestNativeExtern(t *testing.T) {
 	cc := requireCC(t)
 	dir := t.TempDir()
 	lib := `#include <stdint.h>
+#include <stdlib.h>
 int64_t area(int32_t w, int32_t h) { return (int64_t)w * h; }
 const char *greet(int ok) { return ok ? "hello from C" : 0; }
 static int counter;
 void bump(void) { counter++; }
 int32_t count(void) { return counter; }
 uint64_t huge(void) { return UINT64_MAX; }
+typedef struct { int n; } Counter;
+void *counter_new(void) { return calloc(1, sizeof(Counter)); }
+void counter_inc(void *c) { ((Counter *)c)->n++; }
+int32_t counter_get(void *c) { return ((Counter *)c)->n; }
+void counter_free(void *c) { free(c); }
+void *nothing(void) { return 0; }
 `
 	if err := os.WriteFile(filepath.Join(dir, "geo.c"), []byte(lib), 0644); err != nil {
 		t.Fatal(err)
@@ -606,6 +613,33 @@ c("x")`, "", "cos argument 1 must be number, got STRING"},
 extern "c" { fn strlen(s: cstring) -> u64 }
 fn l(v) { strlen(v) }
 l("a" + json.parse("\"\\u0000\""))`, "", "strlen argument 1 contains a NUL byte"},
+		{"handles", `import "process" as process
+extern "./libgeo.so" {
+    fn counter_new() -> ptr
+    fn counter_inc(c: ptr)
+    fn counter_get(c: ptr) -> i32
+    fn counter_free(c: ptr)
+    fn nothing() -> ptr
+}
+extern "c" {
+    fn fopen(path: cstring, mode: cstring) -> ptr
+    fn fputs(s: cstring, f: ptr) -> i32
+    fn fclose(f: ptr) -> i32
+}
+let c = counter_new()
+counter_inc(c)
+counter_inc(c)
+fn get(h: ptr) -> int { counter_get(h) }
+println(get(c), type(c), c == c, c == nothing(), nothing(), fopen("/nonexistent/unda", "r"))
+counter_free(c)
+let path = process.env("UNDA_FFI_OUT")
+let f = fopen(path, "w")
+fputs("written from unda", f)
+fclose(f)
+println(read_file(path))`, "2 pointer true false nil nil\nwritten from unda\n", ""},
+		{"ptr arg type", `extern "./libgeo.so" { fn counter_get(c: ptr) -> i32 }
+fn g(v) { counter_get(v) }
+g(5)`, "", "counter_get argument 1 must be POINTER, got INTEGER"},
 		{"u64 result", `extern "./libgeo.so" { fn huge() -> u64 }
 huge()`, "", "huge returned 18446744073709551615, too big for an int"},
 	}
@@ -625,6 +659,7 @@ huge()`, "", "huge returned 18446744073709551615, too big for an int"},
 			}
 			var out, errOut bytes.Buffer
 			cmd := exec.Command(exe)
+			cmd.Env = append(os.Environ(), "UNDA_FFI_OUT="+filepath.Join(dir, "ffi_out.txt"))
 			cmd.Stdout, cmd.Stderr = &out, &errOut
 			_ = cmd.Run()
 			if out.String() != tt.stdout || !strings.Contains(errOut.String(), tt.stderr) {

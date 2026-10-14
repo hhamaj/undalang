@@ -137,11 +137,12 @@ type ExternFunc struct {
 }
 
 // CTypes are the C types extern functions can take and return. cstring is a
-// NUL-terminated char pointer, void only goes in return position
+// NUL-terminated char pointer, ptr is any other pointer, which Unda code can
+// only hold and hand back to C
 var CTypes = map[string]bool{
 	"i8": true, "i16": true, "i32": true, "i64": true,
 	"u8": true, "u16": true, "u32": true, "u64": true,
-	"f32": true, "f64": true, "bool": true, "cstring": true,
+	"f32": true, "f64": true, "bool": true, "cstring": true, "ptr": true,
 }
 
 func (es *ExternStatement) statementNode()       {}
@@ -431,7 +432,8 @@ var TypeNames = map[string][]string{
 	"fn":     {"FUNCTION", "BUILTIN"},
 	"module": {"MODULE"},
 	"result": {"RESULT"},
-	"any":    {"INTEGER", "FLOAT", "STRING", "BOOLEAN", "NIL", "ARRAY", "MAP", "FUNCTION", "BUILTIN", "MODULE", "RESULT"},
+	"ptr":    {"POINTER"},
+	"any":    {"INTEGER", "FLOAT", "STRING", "BOOLEAN", "NIL", "ARRAY", "MAP", "FUNCTION", "BUILTIN", "MODULE", "RESULT", "POINTER"},
 }
 
 // IsStruct reports whether the annotation names a struct. struct names start

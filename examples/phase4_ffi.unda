@@ -11,6 +11,9 @@ extern "c" {
     fn getpid() -> i32
     fn strlen(s: cstring) -> u64
     fn getenv(name: cstring) -> cstring
+    fn fopen(path: cstring, mode: cstring) -> ptr
+    fn fputs(s: cstring, f: ptr) -> i32
+    fn fclose(f: ptr) -> i32
 }
 
 struct Point { x: number, y: number }
@@ -22,3 +25,14 @@ fn dist(a: Point, b: Point) -> float {
 println("distance:", dist(Point(0, 0), Point(3, 4)))
 println("bytes in \"çay\":", strlen("çay"))
 println("has HOME:", getenv("HOME") != nil, "pid > 0:", getpid() > 0)
+
+// a FILE * from C is a ptr: hold it, hand it back, nothing else
+let path = "/tmp/unda_ffi_example.txt"
+let f = fopen(path, "w")
+if f == nil {
+    println("could not open", path)
+} else {
+    fputs("written through libc", f)
+    fclose(f)
+    println(read_file(path))
+}

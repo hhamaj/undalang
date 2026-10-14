@@ -640,6 +640,8 @@ func cTypeKind(t *ast.TypeAnnotation, result bool) Kind {
 		return KString | KNil
 	case t.Name == "cstring":
 		return KString
+	case t.Name == "ptr":
+		return KPointer | KNil
 	}
 	return KInt
 }
