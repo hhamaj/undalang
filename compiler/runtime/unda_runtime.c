@@ -1983,7 +1983,12 @@ static UValue u_module_from_frame(const char *name, int count, const char **name
 
 /* entry point */
 
-static UValue u_program_main(void);
+/*
+ * u_program_main must not be inlined. the stack scan stops at `top` in
+ * u_main_thread, and an inlined program body would put its temporaries in
+ * that same frame, maybe above `top` where the GC never looks
+ */
+__attribute__((noinline)) static UValue u_program_main(void);
 static void u_register_roots(void);
 
 static void *u_main_thread(void *arg) {
