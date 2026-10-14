@@ -5,6 +5,8 @@ import (
 	"math/bits"
 	"sort"
 	"strings"
+
+	"undalang/ast"
 )
 
 // Kind is a bit set of the runtime value kinds an expression can produce. a
@@ -23,12 +25,13 @@ const (
 	KFunction
 	KBuiltin
 	KModule
+	KResult
 
 	KNever   Kind = 0
 	KNumber       = KInt | KFloat
 	KCall         = KFunction | KBuiltin
 	KHash         = KInt | KString | KBool | KNil
-	KUnknown      = KInt | KFloat | KString | KBool | KNil | KArray | KMap | KFunction | KBuiltin | KModule
+	KUnknown      = KInt | KFloat | KString | KBool | KNil | KArray | KMap | KFunction | KBuiltin | KModule | KResult
 )
 
 var kindNames = []struct {
@@ -37,7 +40,7 @@ var kindNames = []struct {
 }{
 	{KInt, "INTEGER"}, {KFloat, "FLOAT"}, {KString, "STRING"}, {KBool, "BOOLEAN"},
 	{KNil, "NIL"}, {KArray, "ARRAY"}, {KMap, "MAP"}, {KFunction, "FUNCTION"},
-	{KBuiltin, "BUILTIN"}, {KModule, "MODULE"},
+	{KBuiltin, "BUILTIN"}, {KModule, "MODULE"}, {KResult, "RESULT"},
 }
 
 func (k Kind) Known() bool { return bits.OnesCount16(uint16(k)) == 1 }
@@ -67,6 +70,42 @@ type Type struct {
 	Arity   int
 	Builtin *Signature
 	Module  *ModuleType
+	// Func is set for a known function literal, calls check their arguments
+	// against its parameter types
+	Func *ast.FunctionLiteral
+}
+
+// AnnotationKind turns a type annotation into the kinds it accepts, nil
+// means anything goes
+func AnnotationKind(t *ast.TypeAnnotation) Kind {
+	if t == nil {
+		return KUnknown
+	}
+	var k Kind
+	for _, name := range ast.TypeNames[t.Name] {
+		for _, kn := range kindNames {
+			if kn.name == name {
+				k |= kn.kind
+			}
+		}
+	}
+	return k
+}
+
+// fits reports whether a value of type t could fit annotation a. a value
+// whose kinds don't overlap the annotation at all can never fit
+func fits(t Type, a *ast.TypeAnnotation) bool {
+	return a == nil || t.Kind == KNever || t.Kind&AnnotationKind(a) != 0
+}
+
+// narrow keeps what we know about t but drops the kinds a rules out, the
+// runtime check guarantees the rest
+func narrow(t Type, a *ast.TypeAnnotation) Type {
+	k := AnnotationKind(a)
+	if t.Kind&k == t.Kind {
+		return t
+	}
+	return kindType(t.Kind & k)
 }
 
 // ModuleType lists the module members known at compile time
@@ -87,7 +126,7 @@ func join(a, b Type) Type {
 	if b.Kind == KNever {
 		return a
 	}
-	if a.Kind == b.Kind && a.Arity == b.Arity && a.Builtin == b.Builtin && a.Module == b.Module {
+	if a.Kind == b.Kind && a.Arity == b.Arity && a.Builtin == b.Builtin && a.Module == b.Module && a.Func == b.Func {
 		return a
 	}
 	return kindType(a.Kind | b.Kind)
@@ -134,9 +173,15 @@ var GlobalBuiltins = map[string]*Signature{
 	"println":     sig("println", 0, -1, KNil),
 	"len":         sig("len", 1, 1, KInt, KString|KArray|KMap),
 	"type":        sig("type", 1, 1, KString, KUnknown),
+	"ok":          sig("ok", 1, 1, KResult, KUnknown),
+	"err":         sig("err", 1, 1, KResult, KUnknown),
 	"read_file":   sig("read_file", 1, 1, KString, KString),
 	"write_file":  sig("write_file", 2, 2, KInt, KString, KString),
 	"append_file": sig("append_file", 2, 2, KInt, KString, KString),
+
+	"try_read_file":   sig("try_read_file", 1, 1, KResult, KString),
+	"try_write_file":  sig("try_write_file", 2, 2, KResult, KString, KString),
+	"try_append_file": sig("try_append_file", 2, 2, KResult, KString, KString),
 }
 
 // StdModules mirrors builtins.StdModules
@@ -175,6 +220,7 @@ var StdModules = map[string]map[string]*Signature{
 	"json": {
 		"parse":     sig("json.parse", 1, 1, KUnknown, KString),
 		"stringify": sig("json.stringify", 1, 1, KString, KUnknown),
+		"try_parse": sig("json.try_parse", 1, 1, KResult, KString),
 	},
 	"math": {
 		"abs":   sig("math.abs", 1, 1, KFloat, KNumber),
@@ -192,12 +238,14 @@ var StdModules = map[string]map[string]*Signature{
 		"unix":   sig("time.unix", 0, 0, KInt),
 	},
 	"process": {
-		"args": sig("process.args", 0, 0, KArray),
-		"env":  sig("process.env", 1, 1, KString, KString),
-		"run":  sig("process.run", 1, -1, KString, KString),
+		"args":    sig("process.args", 0, 0, KArray),
+		"env":     sig("process.env", 1, 1, KString, KString),
+		"run":     sig("process.run", 1, -1, KString, KString),
+		"try_run": sig("process.try_run", 1, -1, KResult, KString),
 	},
 	"shell": {
-		"run": sig("shell.run", 1, 1, KString, KString),
+		"run":     sig("shell.run", 1, 1, KString, KString),
+		"try_run": sig("shell.try_run", 1, 1, KResult, KString),
 	},
 }
 

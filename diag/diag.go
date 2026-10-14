@@ -97,3 +97,43 @@ func DisplayPath(path string) string {
 	}
 	return rel
 }
+
+// DidYouMean picks the candidate closest to name and returns it as a hint
+// like ` (did you mean "upper"?)`, or "" when nothing is close. close means
+// at most one edit per three characters, so short names never get a guess
+func DidYouMean(name string, candidates []string) string {
+	best, bestDist := "", len(name)/3+1
+	for _, c := range candidates {
+		if c == name {
+			continue
+		}
+		if d := editDistance(name, c); d < bestDist || (d == bestDist && best != "" && c < best) {
+			best, bestDist = c, d
+		}
+	}
+	if best == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (did you mean %q?)", best)
+}
+
+func editDistance(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	prev := make([]int, len(br)+1)
+	cur := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		cur[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(br)]
+}

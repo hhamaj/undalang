@@ -25,18 +25,21 @@
 #include <time.h>
 #include <unistd.h>
 
-typedef enum { U_UNDEF = 0, U_NIL, U_BOOL, U_INT, U_FLOAT, U_STR, U_ARR, U_MAP, U_FN, U_BUILTIN, U_MOD } UTag;
+typedef enum { U_UNDEF = 0, U_NIL, U_BOOL, U_INT, U_FLOAT, U_STR, U_ARR, U_MAP, U_FN, U_BUILTIN, U_MOD, U_RES } UTag;
 
 typedef struct UStr { size_t len; char data[]; } UStr;
 typedef struct UArr UArr;
 typedef struct UMap UMap;
 typedef struct UFn UFn;
 typedef struct UMod UMod;
+typedef struct URes URes;
 
 typedef struct UValue {
     UTag tag;
-    union { bool b; int64_t i; double f; UStr *s; UArr *a; UMap *m; UFn *fn; UMod *mod; } as;
+    union { bool b; int64_t i; double f; UStr *s; UArr *a; UMap *m; UFn *fn; UMod *mod; URes *r; } as;
 } UValue;
+
+struct URes { bool ok; UValue v; };
 
 struct UArr { size_t len, cap; UValue *items; };
 typedef struct { UValue key, value; } UEntry;
@@ -290,6 +293,13 @@ static inline UValue uv_sb_value(USb *sb) { UValue v = uv_str_n(sb->buf ? sb->bu
 static inline UValue uv_arrv(UArr *a) { UValue v; v.tag = U_ARR; v.as.a = a; return v; }
 static inline UValue uv_mapv(UMap *m) { UValue v; v.tag = U_MAP; v.as.m = m; return v; }
 static inline UValue uv_modv(UMod *m) { UValue v; v.tag = U_MOD; v.as.mod = m; return v; }
+static UValue uv_result(bool ok, UValue inner) {
+    URes *r = u_alloc(sizeof(URes));
+    r->ok = ok;
+    r->v = inner;
+    UValue v; v.tag = U_RES; v.as.r = r;
+    return v;
+}
 
 static UArr *u_arr_new(size_t cap) {
     UArr *a = u_alloc(sizeof(UArr));
@@ -349,6 +359,7 @@ static const char *u_type_name(UValue v) {
     case U_FN: return "FUNCTION";
     case U_BUILTIN: return "BUILTIN";
     case U_MOD: return "MODULE";
+    case U_RES: return "RESULT";
     default: return "UNDEFINED";
     }
 }
@@ -515,6 +526,11 @@ static void u_inspect_to(USb *sb, UValue v) {
         free(names);
         break;
     }
+    case U_RES:
+        sb_puts(sb, v.as.r->ok ? "ok(" : "err(");
+        u_inspect_to(sb, v.as.r->v);
+        sb_putc(sb, ')');
+        break;
     default: sb_puts(sb, "<undefined>"); break;
     }
 }
@@ -633,6 +649,7 @@ static bool u_equal(UValue a, UValue b) {
         return true;
     case U_FN: case U_BUILTIN: return b.tag == a.tag && a.as.fn == b.as.fn;
     case U_MOD: return b.tag == U_MOD && a.as.mod == b.as.mod;
+    case U_RES: return b.tag == U_RES && a.as.r->ok == b.as.r->ok && u_equal(a.as.r->v, b.as.r->v);
     default: return false;
     }
 }
@@ -799,18 +816,82 @@ static UValue u_member(UValue obj, const char *name) {
     u_panic("module \"%s\" has no member \"%s\"", m->name, name);
 }
 
+/*
+ * the location goes back to the call site once the callee returns. the
+ * interpreter reports errors coming out of a builtin at the builtin's call,
+ * so a callback that already ran mustn't leave its own location behind
+ */
 static UValue u_call(UValue f, int argc, UValue *argv) {
     if (f.tag == U_BUILTIN) return f.as.fn->code(NULL, argc, argv);
     if (f.tag != U_FN) u_panic("not a function: %s", u_type_name(f));
     if (argc != f.as.fn->arity) u_panic("wrong number of arguments: expected %d, got %d", f.as.fn->arity, argc);
     if (u_depth >= U_MAX_DEPTH) u_panic("maximum call depth exceeded");
+    const char *file = u_file;
+    int line = u_line, col = u_col;
     u_depth++;
     UValue result = f.as.fn->code(f.as.fn->env, argc, argv);
     u_depth--;
+    U_LOC(file, line, col);
     return result;
 }
 
+static void u_want_result(UValue v) {
+    if (v.tag != U_RES) u_panic("? expects RESULT, got %s", u_type_name(v));
+}
+
+static void u_unhandled(UValue v) __attribute__((noreturn));
+static void u_unhandled(UValue v) {
+    USb sb = {0};
+    u_inspect_to(&sb, v);
+    u_panic("unhandled %.*s", (int)sb.len, sb.buf);
+}
+
+/* panics unless v's tag is in mask. what is like "x expects int" */
+static void u_check_type(UValue v, unsigned mask, const char *what) {
+    if (!(mask & (1u << v.tag))) u_panic("type mismatch: %s, got %s", what, u_type_name(v));
+}
+
 /* builtin helpers */
+
+/*
+ * failures caused by the outside world (missing files, bad JSON, commands
+ * exiting non-zero) go through u_failf. normally that's a runtime error, but
+ * while a try_ builtin runs u_fail_jmp is set and the failure jumps back to
+ * it so it can return err(message) instead
+ */
+static jmp_buf *u_fail_jmp = NULL;
+static char *u_fail_text = NULL;
+
+static void u_failf(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));
+static void u_failf(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+    char *buf = u_xalloc((size_t)n + 1);
+    va_start(ap, fmt);
+    vsnprintf(buf, (size_t)n + 1, fmt, ap);
+    va_end(ap);
+    if (!u_fail_jmp) u_panic("%s", buf);
+    u_fail_text = buf;
+    longjmp(*u_fail_jmp, 1);
+}
+
+/* runs expr and returns ok(its value), or err(message) if it called u_failf */
+#define U_ATTEMPT(expr) do { \
+    jmp_buf jb_; \
+    jmp_buf *prev_ = u_fail_jmp; \
+    u_fail_jmp = &jb_; \
+    if (setjmp(jb_)) { \
+        u_fail_jmp = prev_; \
+        UValue msg_ = uv_cstr(u_fail_text); \
+        free(u_fail_text); \
+        return uv_result(false, msg_); \
+    } \
+    UValue v_ = (expr); \
+    u_fail_jmp = prev_; \
+    return uv_result(true, v_); \
+} while (0)
 
 #define U_ARGC(name, n) do { if (argc != (n)) u_panic("%s expects %d %s, got %d", name, n, (n) == 1 ? "argument" : "arguments", argc); } while (0)
 #define U_BUILTIN_FN(fn) static UValue fn(UFrame *env_, int argc, UValue *argv)
@@ -851,7 +932,7 @@ static void u_file_error(const char *builtin, const char *op, UStr *path, int er
     u_go_quote(&sb, path->data, path->len);
     sb_printf(&sb, ": %s %s: ", op, path->data);
     u_errno_text(&sb, err);
-    u_panic("%s", sb.buf);
+    u_failf("%s", sb.buf);
 }
 
 /* global builtins */
@@ -904,6 +985,18 @@ U_BUILTIN_FN(ub_len) {
     }
 }
 
+U_BUILTIN_FN(ub_ok) {
+    (void)env_;
+    U_ARGC("ok", 1);
+    return uv_result(true, argv[0]);
+}
+
+U_BUILTIN_FN(ub_err) {
+    (void)env_;
+    U_ARGC("err", 1);
+    return uv_result(false, argv[0]);
+}
+
 U_BUILTIN_FN(ub_type) {
     (void)env_;
     U_ARGC("type", 1);
@@ -914,20 +1007,24 @@ U_BUILTIN_FN(ub_type) {
     return uv_cstr(lower);
 }
 
-U_BUILTIN_FN(ub_read_file) {
-    (void)env_;
-    U_ARGC("read_file", 1);
-    UStr *path = u_want_str(argv[0], "read_file path");
+static UValue u_read_common(const char *name, int argc, UValue *argv) {
+    U_ARGC(name, 1);
+    char what[64];
+    snprintf(what, sizeof what, "%s path", name);
+    UStr *path = u_want_str(argv[0], what);
     FILE *f = fopen(path->data, "rb");
-    if (!f) u_file_error("read_file", "open", path, errno);
+    if (!f) u_file_error(name, "open", path, errno);
     USb sb = {0};
     char buf[8192];
     size_t n;
     while ((n = fread(buf, 1, sizeof buf, f)) > 0) sb_putn(&sb, buf, n);
-    if (ferror(f)) { int err = errno; fclose(f); u_file_error("read_file", "read", path, err); }
+    if (ferror(f)) { int err = errno; fclose(f); free(sb.buf); u_file_error(name, "read", path, err); }
     fclose(f);
     return uv_sb_value(&sb);
 }
+
+U_BUILTIN_FN(ub_read_file) { (void)env_; return u_read_common("read_file", argc, argv); }
+U_BUILTIN_FN(ub_try_read_file) { (void)env_; U_ATTEMPT(u_read_common("try_read_file", argc, argv)); }
 
 static UValue u_write_common(const char *name, int argc, UValue *argv, const char *mode) {
     U_ARGC(name, 2);
@@ -947,6 +1044,8 @@ static UValue u_write_common(const char *name, int argc, UValue *argv, const cha
 
 U_BUILTIN_FN(ub_write_file) { (void)env_; return u_write_common("write_file", argc, argv, "wb"); }
 U_BUILTIN_FN(ub_append_file) { (void)env_; return u_write_common("append_file", argc, argv, "ab"); }
+U_BUILTIN_FN(ub_try_write_file) { (void)env_; U_ATTEMPT(u_write_common("try_write_file", argc, argv, "wb")); }
+U_BUILTIN_FN(ub_try_append_file) { (void)env_; U_ATTEMPT(u_write_common("try_append_file", argc, argv, "ab")); }
 
 /* strings */
 
@@ -1689,17 +1788,21 @@ static bool uj_value(UJson *j, UValue *out) {
     }
 }
 
-U_BUILTIN_FN(uj_parse) {
-    (void)env_;
-    U_ARGC("json.parse", 1);
-    UStr *s = u_want_str(argv[0], "json.parse input");
+static UValue u_json_parse(const char *name, int argc, UValue *argv) {
+    U_ARGC(name, 1);
+    char what[64];
+    snprintf(what, sizeof what, "%s input", name);
+    UStr *s = u_want_str(argv[0], what);
     UJson j = {s->data, s->len, 0, {0}};
     UValue v;
-    if (!uj_value(&j, &v)) u_panic("json.parse failed: %s", j.err);
+    if (!uj_value(&j, &v)) u_failf("%s failed: %s", name, j.err);
     uj_skip(&j);
-    if (j.i < j.n) { uj_fail(&j, "after top-level value"); u_panic("json.parse failed: %s", j.err); }
+    if (j.i < j.n) { uj_fail(&j, "after top-level value"); u_failf("%s failed: %s", name, j.err); }
     return v;
 }
+
+U_BUILTIN_FN(uj_parse) { (void)env_; return u_json_parse("json.parse", argc, argv); }
+U_BUILTIN_FN(uj_try_parse) { (void)env_; U_ATTEMPT(u_json_parse("json.try_parse", argc, argv)); }
 
 /* math */
 
@@ -1843,13 +1946,13 @@ static void u_trim_into(USb *dst, const char *s, size_t n) {
 static UValue u_run_command(const char *who, char **cargv) {
     USb err = {0};
     char *exe = u_lookpath(cargv[0], &err);
-    if (!exe) u_panic("%s failed: %s: ", who, err.buf);
+    if (!exe) u_failf("%s failed: %s: ", who, err.buf);
     int fds[2];
-    if (pipe(fds) != 0) u_panic("%s failed: pipe: %s", who, strerror(errno));
+    if (pipe(fds) != 0) u_failf("%s failed: pipe: %s", who, strerror(errno));
     fflush(stdout);
     fflush(stderr);
     pid_t pid = fork();
-    if (pid < 0) u_panic("%s failed: fork: %s", who, strerror(errno));
+    if (pid < 0) u_failf("%s failed: fork: %s", who, strerror(errno));
     if (pid == 0) {
         int devnull = open("/dev/null", O_RDONLY);
         if (devnull >= 0) { dup2(devnull, 0); close(devnull); }
@@ -1876,24 +1979,32 @@ static UValue u_run_command(const char *who, char **cargv) {
     else sb_puts(&msg, "unknown error");
     USb trimmed = {0};
     u_trim_into(&trimmed, out.buf ? out.buf : "", out.len);
-    u_panic("%s failed: %s: %s", who, msg.buf, trimmed.buf ? trimmed.buf : "");
+    u_failf("%s failed: %s: %s", who, msg.buf, trimmed.buf ? trimmed.buf : "");
 }
 
-U_BUILTIN_FN(up_run) {
-    (void)env_;
-    if (argc < 1) u_panic("process.run expects at least 1 argument, got %d", argc);
+static UValue u_process_run(const char *name, int argc, UValue *argv) {
+    if (argc < 1) u_panic("%s expects at least 1 argument, got %d", name, argc);
+    char what[64];
     char **cargv = u_xalloc((size_t)(argc + 1) * sizeof(char *));
-    cargv[0] = u_want_str(argv[0], "process.run command")->data;
-    for (int i = 1; i < argc; i++) cargv[i] = u_want_str(argv[i], "process.run argument")->data;
-    return u_run_command("process.run", cargv);
+    snprintf(what, sizeof what, "%s command", name);
+    cargv[0] = u_want_str(argv[0], what)->data;
+    snprintf(what, sizeof what, "%s argument", name);
+    for (int i = 1; i < argc; i++) cargv[i] = u_want_str(argv[i], what)->data;
+    return u_run_command(name, cargv);
 }
 
-U_BUILTIN_FN(ush_run) {
-    (void)env_;
-    U_ARGC("shell.run", 1);
-    char *cargv[4] = {"sh", "-c", u_want_str(argv[0], "shell.run command")->data, NULL};
-    return u_run_command("shell.run", cargv);
+static UValue u_shell_run(const char *name, int argc, UValue *argv) {
+    U_ARGC(name, 1);
+    char what[64];
+    snprintf(what, sizeof what, "%s command", name);
+    char *cargv[4] = {"sh", "-c", u_want_str(argv[0], what)->data, NULL};
+    return u_run_command(name, cargv);
 }
+
+U_BUILTIN_FN(up_run) { (void)env_; return u_process_run("process.run", argc, argv); }
+U_BUILTIN_FN(up_try_run) { (void)env_; U_ATTEMPT(u_process_run("process.try_run", argc, argv)); }
+U_BUILTIN_FN(ush_run) { (void)env_; return u_shell_run("shell.run", argc, argv); }
+U_BUILTIN_FN(ush_try_run) { (void)env_; U_ATTEMPT(u_shell_run("shell.try_run", argc, argv)); }
 
 /* module tables */
 
@@ -1915,7 +2026,8 @@ static const UBuiltinDef u_maps_defs[] = {
     {"merge", um_merge, "maps.merge"}, {"set", um_set, "maps.set"}, {"values", um_values, "maps.values"},
     {NULL, NULL, NULL}};
 static const UBuiltinDef u_json_defs[] = {
-    {"parse", uj_parse, "json.parse"}, {"stringify", uj_stringify, "json.stringify"}, {NULL, NULL, NULL}};
+    {"parse", uj_parse, "json.parse"}, {"stringify", uj_stringify, "json.stringify"},
+    {"try_parse", uj_try_parse, "json.try_parse"}, {NULL, NULL, NULL}};
 static const UBuiltinDef u_math_defs[] = {
     {"abs", umath_abs, "math.abs"}, {"ceil", umath_ceil, "math.ceil"}, {"floor", umath_floor, "math.floor"},
     {"max", umath_max, "math.max"}, {"min", umath_min, "math.min"}, {"pow", umath_pow, "math.pow"},
@@ -1923,8 +2035,10 @@ static const UBuiltinDef u_math_defs[] = {
 static const UBuiltinDef u_time_defs[] = {
     {"format", ut_format, "time.format"}, {"now", ut_now, "time.now"}, {"unix", ut_unix, "time.unix"}, {NULL, NULL, NULL}};
 static const UBuiltinDef u_process_defs[] = {
-    {"args", up_args, "process.args"}, {"env", up_env, "process.env"}, {"run", up_run, "process.run"}, {NULL, NULL, NULL}};
-static const UBuiltinDef u_shell_defs[] = {{"run", ush_run, "shell.run"}, {NULL, NULL, NULL}};
+    {"args", up_args, "process.args"}, {"env", up_env, "process.env"}, {"run", up_run, "process.run"},
+    {"try_run", up_try_run, "process.try_run"}, {NULL, NULL, NULL}};
+static const UBuiltinDef u_shell_defs[] = {
+    {"run", ush_run, "shell.run"}, {"try_run", ush_try_run, "shell.try_run"}, {NULL, NULL, NULL}};
 
 static UValue u_std_module(const char *name) {
     const UBuiltinDef *defs = NULL;
@@ -1954,8 +2068,11 @@ static UValue u_std_module(const char *name) {
 static UValue u_global_builtin(const char *name) {
     static const UBuiltinDef defs[] = {
         {"print", ub_print, "print"}, {"println", ub_println, "println"}, {"len", ub_len, "len"},
-        {"type", ub_type, "type"}, {"read_file", ub_read_file, "read_file"},
+        {"type", ub_type, "type"}, {"ok", ub_ok, "ok"}, {"err", ub_err, "err"},
+        {"read_file", ub_read_file, "read_file"},
         {"write_file", ub_write_file, "write_file"}, {"append_file", ub_append_file, "append_file"},
+        {"try_read_file", ub_try_read_file, "try_read_file"}, {"try_write_file", ub_try_write_file, "try_write_file"},
+        {"try_append_file", ub_try_append_file, "try_append_file"},
         {NULL, NULL, NULL}};
     for (int i = 0; defs[i].name; i++)
         if (!strcmp(defs[i].name, name)) return u_builtin(defs[i].code, defs[i].qualified);

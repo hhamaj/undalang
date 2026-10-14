@@ -276,6 +276,93 @@ f(1)`,
 	"err_shell":          "import \"shell\" as shell\nshell.run(\"echo out; exit 3\")",
 	"err_unknown_op":     "fn s(a, b) { a - b }\ns(\"x\", \"y\")",
 	"err_string_and":     "fn s(a, b) { a && b }\ns(\"x\", \"y\")",
+	"typed": `import "arrays" as arrays
+fn add(a: int, b: int) -> int { a + b }
+fn half(n: number) -> float { n / 2.0 }
+let mut total: int = 0
+for x in [1, 2, 3] { total = add(total, x) }
+println(total, half(3), half(2.5))
+let greet = fn(name: string) -> string { "hi " + name }
+println(greet("unda"), "unda" |> greet)
+println(add)
+println(greet)
+fn maybe(flag: bool) -> any { if flag { 1 } else { nil } }
+println(maybe(true), maybe(false))
+let f: fn = len
+println(f("abc"), arrays.map([1, 2], fn(v: int) -> int { v * 10 }))
+fn first(xs: array) -> any { for x in xs { return x } }
+println(first([7, 8]), first([]))
+`,
+	"results": `import "strings" as strings
+fn parse_age(s: string) -> result {
+    let n = match s { "" -> nil, "36" -> 36, "five" -> nil, _ -> -1 }
+    if n == nil { return err("not a number: " + s) }
+    if n < 0 { return err("negative") }
+    ok(n)
+}
+fn describe(s) -> result {
+    let age = parse_age(s)?
+    ok(strings.upper(s) + " is " + type(age) + " " + "!")
+}
+for s in ["36", "five", "-1"] {
+    println(describe(s), match describe(s) { ok(v) -> v, err(e) -> "failed: " + e })
+}
+println(ok(1) == ok(1), ok(1) == err(1), err([1, 2]), type(ok(nil)), ok(ok(2)))
+let r: result = err({"code": 3})
+println(match r { err({"code": c}) if c > 2 -> c, _ -> 0 })
+fn first_ok(rs) { for r in rs { let v = r?
+println("got", v) }
+"all ok" }
+println(first_ok([ok(1), ok(2)]), first_ok([ok(1), err("stop"), ok(3)]))
+`,
+	"try_builtins": `import "json" as json
+import "shell" as shell
+import "process" as process
+println(try_read_file("/nonexistent/unda/file"))
+println(try_read_file("/dev/null"), try_write_file("/dev/null", "abc"), try_append_file("/dev/null", "x"))
+println(try_write_file("/nonexistent/unda/file", "x"))
+println(try_append_file("/nonexistent/unda/file", "x"))
+println(json.try_parse("{\"a\": [1, 2.5, null]}"), json.try_parse("[1, 2"), json.try_parse("1 x"))
+println(shell.try_run("echo hi"), shell.try_run("echo out; exit 3"))
+println(process.try_run("unda-no-such-command-xyz"), process.try_run("sh", "-c", "echo yes"))
+fn load(path) -> result {
+    let text = try_read_file(path)?
+    let data = json.try_parse(text)?
+    ok(data)
+}
+println(load("/nonexistent/unda/config.json"))
+match load("/dev/null") { ok(v) -> println("ok", v), err(e) -> println("bad:", e) }
+`,
+	"err_try_arg":   "fn r(p) { try_read_file(p) }\nr(5)",
+	"err_try_arity": "import \"json\" as json\nfn p(f) { f(1, 2) }\np(json.try_parse)",
+	"fast_ints": `fn calc(a, b) { [a + b, a - b, a * b, a / b, a % b, a < b, a >= b, a == b, a != b] }
+println(calc(7, 2), calc(-7, 2), calc(7, -2), calc(-7, -2))
+println(calc(9223372036854775807, 1), calc(-9223372036854775807 - 1, -1))
+println(calc(7, 2.5), calc(1.5, 2), calc("a", "a")[7], -(-9223372036854775807 - 1))
+println(2 * 3 + 4, 1 - 9223372036854775807 - 2, 3 < 4, 5 == 5, -(2 + 3))
+fn twice(f, v) { f(f(v)) }
+fn inc(n) { n + 1 }
+println(twice(inc, 1), 5 |> inc, inc(1) |> twice(inc))
+fn redefined() { 1 }
+let redefined = fn() { 2 }
+println(redefined())
+`,
+	"err_fast_div":         "fn d(a, b) { a / b }\nprintln(d(7, 2))\nd(1, 0)",
+	"err_fast_mod":         "fn d(a, b) { a % b }\nprintln(d(-7, 3))\nd(1, 0)",
+	"err_fast_mismatch":    "fn s(a, b) { a < b }\nprintln(s(1, 2))\ns(1, \"x\")",
+	"err_direct_too_early": "fn a() { b() }\na()\nfn b() { 1 }",
+	"err_direct_depth":     "fn down(n) { down(n + 1) }\ndown(0)",
+	"err_unhandled":        "fn f() { err(\"boom\") }\nprintln(\"before\")\nlet v = f()?",
+	"err_try_type":         "fn f(v) { v? }\nf(5)",
+	"err_json_result":      "import \"json\" as json\njson.stringify([ok(1)])",
+	"err_typed_let":        "fn g() { \"s\" }\nlet x: int = g()",
+	"err_typed_assign":     "let mut n: int = 1\nfn set(v) { n = v }\nset(2)\nprintln(n)\nset(\"s\")",
+	"err_typed_param":      "fn f(a: int) { a }\nfn call(v) { f(v) }\ncall(\"s\")",
+	"err_typed_callback":   "import \"arrays\" as arrays\narrays.map([1, \"x\"], fn(v: int) { let w = v\nw })",
+	"err_typed_return":     "fn f(v) -> int {\n    if v { return v }\n    0\n}\nprintln(f(nil))\nf(\"s\")",
+	"err_typed_implicit":   "fn f(v) -> string {\n    let x = v\n    x\n}\nf(1)",
+	"err_typed_no_else":    "fn f(v) -> int {\n    if v { 1 }\n}\nprintln(f(true))\nf(false)",
+	"err_typed_pipeline":   "fn up(s: string) { s }\nfn run(v) { v |> up }\nrun(1)",
 }
 
 func TestNativeMatchesInterpreter(t *testing.T) {
@@ -320,7 +407,7 @@ util.fail(2)
 
 func TestNativeExamples(t *testing.T) {
 	cc := requireCC(t)
-	for _, name := range []string{"phase0", "mutability", "phase1_data_pipeline"} {
+	for _, name := range []string{"phase0", "mutability", "phase1_data_pipeline", "phase3_types", "phase3_results"} {
 		t.Run(name, func(t *testing.T) {
 			compareBackends(t, cc, filepath.Join("..", "examples", name+".unda"))
 		})

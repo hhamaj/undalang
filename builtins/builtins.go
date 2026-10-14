@@ -26,11 +26,25 @@ func New(out io.Writer) map[string]*object.Builtin {
 			}
 			return &object.String{Value: strings.ToLower(string(args[0].Type()))}
 		}),
-		"read_file":   builtin(readFileBuiltin),
-		"write_file":  builtin(writeFileBuiltin),
-		"append_file": builtin(appendFileBuiltin),
+		"ok":              builtin(resultBuiltin("ok", true)),
+		"err":             builtin(resultBuiltin("err", false)),
+		"read_file":       plain("read_file", readFile),
+		"try_read_file":   attempt("try_read_file", readFile),
+		"write_file":      plain("write_file", writeFile),
+		"try_write_file":  attempt("try_write_file", writeFile),
+		"append_file":     plain("append_file", appendFile),
+		"try_append_file": attempt("try_append_file", appendFile),
 	}
 	return b
+}
+
+func resultBuiltin(name string, ok bool) object.BuiltinFunction {
+	return func(args ...object.Object) object.Object {
+		if len(args) != 1 {
+			return errorf("%s expects 1 argument, got %d", name, len(args))
+		}
+		return &object.Result{Ok: ok, Value: args[0]}
+	}
 }
 
 // Applier calls an Unda function value. higher-order builtins go through it
@@ -71,7 +85,8 @@ func StdModules(apply Applier) map[string]*object.Module {
 			"values": builtin(mapsValues),
 		}},
 		"json": {Name: "json", Members: map[string]object.Object{
-			"parse":     builtin(jsonParse),
+			"parse":     plain("json.parse", jsonParse),
+			"try_parse": attempt("json.try_parse", jsonParse),
 			"stringify": builtin(jsonStringify),
 		}},
 		"math": {Name: "math", Members: map[string]object.Object{
@@ -96,7 +111,7 @@ func StdModules(apply Applier) map[string]*object.Module {
 				if len(args) != 0 {
 					return errorf("time.unix expects 0 arguments, got %d", len(args))
 				}
-				return &object.Integer{Value: time.Now().Unix()}
+				return object.NewInt(time.Now().Unix())
 			}),
 		}},
 		"process": {Name: "process", Members: map[string]object.Object{
@@ -106,16 +121,49 @@ func StdModules(apply Applier) map[string]*object.Module {
 				}
 				return stringsToArray(os.Args)
 			}),
-			"env": builtin(processEnv),
-			"run": builtin(processRun),
+			"env":     builtin(processEnv),
+			"run":     plain("process.run", processRun),
+			"try_run": attempt("process.try_run", processRun),
 		}},
 		"shell": {Name: "shell", Members: map[string]object.Object{
-			"run": builtin(shellRun),
+			"run":     plain("shell.run", shellRun),
+			"try_run": attempt("shell.try_run", shellRun),
 		}},
 	}
 }
 
 func builtin(fn object.BuiltinFunction) *object.Builtin { return &object.Builtin{Fn: fn} }
+
+// fallible is a builtin that can fail for reasons outside the program, like a
+// missing file or a command exiting non-zero. it gives back its value (an
+// argument error counts as a value, that's the caller's bug) or a failure
+// message. every one of them becomes two builtins, see plain and attempt
+type fallible func(name string, args []object.Object) (object.Object, string)
+
+// plain makes failing a runtime error
+func plain(name string, fn fallible) *object.Builtin {
+	return builtin(func(args ...object.Object) object.Object {
+		v, fail := fn(name, args)
+		if fail != "" {
+			return errorf("%s", fail)
+		}
+		return v
+	})
+}
+
+// attempt is the try_ flavor, it returns ok(value) or err(message)
+func attempt(name string, fn fallible) *object.Builtin {
+	return builtin(func(args ...object.Object) object.Object {
+		v, fail := fn(name, args)
+		if fail != "" {
+			return &object.Result{Value: &object.String{Value: fail}}
+		}
+		if _, isErr := v.(*object.Error); isErr {
+			return v
+		}
+		return &object.Result{Ok: true, Value: v}
+	})
+}
 
 func lenBuiltin(args ...object.Object) object.Object {
 	if len(args) != 1 {
@@ -123,71 +171,72 @@ func lenBuiltin(args ...object.Object) object.Object {
 	}
 	switch arg := args[0].(type) {
 	case *object.String:
-		return &object.Integer{Value: int64(utf8.RuneCountInString(arg.Value))}
+		return object.NewInt(int64(utf8.RuneCountInString(arg.Value)))
 	case *object.Array:
-		return &object.Integer{Value: int64(len(arg.Elements))}
+		return object.NewInt(int64(len(arg.Elements)))
 	case *object.Map:
-		return &object.Integer{Value: int64(len(arg.Pairs))}
+		return object.NewInt(int64(len(arg.Pairs)))
 	default:
 		return errorf("len does not support %s", arg.Type())
 	}
 }
 
-func readFileBuiltin(args ...object.Object) object.Object {
+func readFile(name string, args []object.Object) (object.Object, string) {
 	if len(args) != 1 {
-		return errorf("read_file expects 1 argument, got %d", len(args))
+		return errorf("%s expects 1 argument, got %d", name, len(args)), ""
 	}
-	path, ok := expectString(args[0], "read_file path")
+	path, ok := expectString(args[0], name+" path")
 	if !ok {
-		return pathErr("read_file path", args[0])
+		return pathErr(name+" path", args[0]), ""
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return errorf("read_file failed for %q: %v", path, err)
+		return nil, fmt.Sprintf("%s failed for %q: %v", name, path, err)
 	}
-	return &object.String{Value: string(data)}
+	return &object.String{Value: string(data)}, ""
 }
 
-func writeFileBuiltin(args ...object.Object) object.Object {
-	if len(args) != 2 {
-		return errorf("write_file expects 2 arguments, got %d", len(args))
-	}
-	path, ok := expectString(args[0], "write_file path")
-	if !ok {
-		return pathErr("write_file path", args[0])
-	}
-	content, ok := expectString(args[1], "write_file content")
-	if !ok {
-		return pathErr("write_file content", args[1])
+func writeFile(name string, args []object.Object) (object.Object, string) {
+	path, content, argErr := pathAndContent(name, args)
+	if argErr != nil {
+		return argErr, ""
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		return errorf("write_file failed for %q: %v", path, err)
+		return nil, fmt.Sprintf("%s failed for %q: %v", name, path, err)
 	}
-	return &object.Integer{Value: int64(len(content))}
+	return object.NewInt(int64(len(content))), ""
 }
 
-func appendFileBuiltin(args ...object.Object) object.Object {
+func pathAndContent(name string, args []object.Object) (string, string, object.Object) {
 	if len(args) != 2 {
-		return errorf("append_file expects 2 arguments, got %d", len(args))
+		return "", "", errorf("%s expects 2 arguments, got %d", name, len(args))
 	}
-	path, ok := expectString(args[0], "append_file path")
+	path, ok := expectString(args[0], name+" path")
 	if !ok {
-		return pathErr("append_file path", args[0])
+		return "", "", pathErr(name+" path", args[0])
 	}
-	content, ok := expectString(args[1], "append_file content")
+	content, ok := expectString(args[1], name+" content")
 	if !ok {
-		return pathErr("append_file content", args[1])
+		return "", "", pathErr(name+" content", args[1])
+	}
+	return path, content, nil
+}
+
+func appendFile(name string, args []object.Object) (object.Object, string) {
+	path, content, argErr := pathAndContent(name, args)
+	if argErr != nil {
+		return argErr, ""
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
-		return errorf("append_file failed for %q: %v", path, err)
+		return nil, fmt.Sprintf("%s failed for %q: %v", name, path, err)
 	}
 	defer f.Close()
 	n, err := f.WriteString(content)
 	if err != nil {
-		return errorf("append_file failed for %q: %v", path, err)
+		return nil, fmt.Sprintf("%s failed for %q: %v", name, path, err)
 	}
-	return &object.Integer{Value: int64(n)}
+	return object.NewInt(int64(n)), ""
 }
 
 func stringsSplit(args ...object.Object) object.Object {
@@ -359,7 +408,7 @@ func arraysRange(args ...object.Object) object.Object {
 		if step < 0 && i <= end.Value {
 			break
 		}
-		elements = append(elements, &object.Integer{Value: i})
+		elements = append(elements, object.NewInt(i))
 	}
 	return &object.Array{Elements: elements}
 }
@@ -583,19 +632,19 @@ func mapsValues(args ...object.Object) object.Object {
 	return &object.Array{Elements: values}
 }
 
-func jsonParse(args ...object.Object) object.Object {
+func jsonParse(name string, args []object.Object) (object.Object, string) {
 	if len(args) != 1 {
-		return errorf("json.parse expects 1 argument, got %d", len(args))
+		return errorf("%s expects 1 argument, got %d", name, len(args)), ""
 	}
-	s, ok := expectString(args[0], "json.parse input")
+	s, ok := expectString(args[0], name+" input")
 	if !ok {
-		return pathErr("json.parse input", args[0])
+		return pathErr(name+" input", args[0]), ""
 	}
 	var data interface{}
 	if err := json.Unmarshal([]byte(s), &data); err != nil {
-		return errorf("json.parse failed: %v", err)
+		return nil, fmt.Sprintf("%s failed: %v", name, err)
 	}
-	return fromGoValue(data)
+	return fromGoValue(data), ""
 }
 
 func jsonStringify(args ...object.Object) object.Object {
@@ -624,42 +673,42 @@ func processEnv(args ...object.Object) object.Object {
 	return &object.String{Value: os.Getenv(name)}
 }
 
-func processRun(args ...object.Object) object.Object {
+func processRun(name string, args []object.Object) (object.Object, string) {
 	if len(args) < 1 {
-		return errorf("process.run expects at least 1 argument, got %d", len(args))
+		return errorf("%s expects at least 1 argument, got %d", name, len(args)), ""
 	}
-	name, ok := expectString(args[0], "process.run command")
+	command, ok := expectString(args[0], name+" command")
 	if !ok {
-		return pathErr("process.run command", args[0])
+		return pathErr(name+" command", args[0]), ""
 	}
 	cmdArgs := []string{}
 	for _, arg := range args[1:] {
-		s, ok := expectString(arg, "process.run argument")
+		s, ok := expectString(arg, name+" argument")
 		if !ok {
-			return pathErr("process.run argument", arg)
+			return pathErr(name+" argument", arg), ""
 		}
 		cmdArgs = append(cmdArgs, s)
 	}
-	output, err := exec.Command(name, cmdArgs...).CombinedOutput()
-	if err != nil {
-		return errorf("process.run failed: %v: %s", err, strings.TrimSpace(string(output)))
-	}
-	return &object.String{Value: string(output)}
+	return runCommand(name, exec.Command(command, cmdArgs...))
 }
 
-func shellRun(args ...object.Object) object.Object {
+func shellRun(name string, args []object.Object) (object.Object, string) {
 	if len(args) != 1 {
-		return errorf("shell.run expects 1 argument, got %d", len(args))
+		return errorf("%s expects 1 argument, got %d", name, len(args)), ""
 	}
-	command, ok := expectString(args[0], "shell.run command")
+	command, ok := expectString(args[0], name+" command")
 	if !ok {
-		return pathErr("shell.run command", args[0])
+		return pathErr(name+" command", args[0]), ""
 	}
-	output, err := exec.Command("sh", "-c", command).CombinedOutput()
+	return runCommand(name, exec.Command("sh", "-c", command))
+}
+
+func runCommand(name string, cmd *exec.Cmd) (object.Object, string) {
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return errorf("shell.run failed: %v: %s", err, strings.TrimSpace(string(output)))
+		return nil, fmt.Sprintf("%s failed: %v: %s", name, err, strings.TrimSpace(string(output)))
 	}
-	return &object.String{Value: string(output)}
+	return &object.String{Value: string(output)}, ""
 }
 
 func timeFormat(args ...object.Object) object.Object {
@@ -771,7 +820,7 @@ func fromGoValue(v interface{}) object.Object {
 		return &object.Boolean{Value: v}
 	case float64:
 		if math.Trunc(v) == v {
-			return &object.Integer{Value: int64(v)}
+			return object.NewInt(int64(v))
 		}
 		return &object.Float{Value: v}
 	case string:

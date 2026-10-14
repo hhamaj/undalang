@@ -78,6 +78,10 @@ func walk(n ast.Node, visit func(ast.Node) bool) bool {
 		addExpr(n.Index)
 	case *ast.MemberExpression:
 		addExpr(n.Object)
+	case *ast.TryExpression:
+		addExpr(n.Value)
+	case *ast.ResultPattern:
+		children = append(children, n.Inner)
 	case *ast.CallExpression:
 		addExpr(n.Function)
 		for _, a := range n.Arguments {

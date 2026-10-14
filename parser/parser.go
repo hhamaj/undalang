@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"undalang/ast"
+	"undalang/diag"
 	"undalang/lexer"
 	"undalang/token"
 )
@@ -48,6 +49,7 @@ var precedences = map[token.Type]int{
 	token.LParen:   call,
 	token.LBracket: index,
 	token.Dot:      index,
+	token.Question: index,
 }
 
 type Parser struct {
@@ -94,6 +96,9 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerInfix(token.LBracket, p.parseIndexExpression)
 	p.registerInfix(token.Dot, p.parseMemberExpression)
 	p.registerInfix(token.Pipe, p.parsePipelineExpression)
+	p.registerInfix(token.Question, func(left ast.Expression) ast.Expression {
+		return &ast.TryExpression{Token: p.curToken, Value: left}
+	})
 
 	p.nextToken()
 	p.nextToken()
@@ -237,6 +242,13 @@ func (p *Parser) parseLetStatement() *ast.LetStatement {
 
 	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 
+	if p.peekTokenIs(token.Colon) {
+		p.nextToken()
+		if stmt.Type = p.parseTypeAnnotation(); stmt.Type == nil {
+			return nil
+		}
+	}
+
 	if !p.expectPeek(token.Assign) {
 		return nil
 	}
@@ -261,11 +273,9 @@ func (p *Parser) parseNamedFunctionStatement() *ast.LetStatement {
 	}
 
 	lit := &ast.FunctionLiteral{Token: tok, Name: name.Value}
-	lit.Parameters = p.parseFunctionParameters()
-	if !p.expectPeek(token.LBrace) {
+	if !p.parseSignature(lit) {
 		return nil
 	}
-	lit.Body = p.parseBlockStatement()
 
 	return &ast.LetStatement{Token: token.Token{Type: token.Let, Literal: "let", Line: tok.Line, Column: tok.Column}, Name: name, Value: lit}
 }
@@ -441,17 +451,9 @@ func (p *Parser) parseBlockStatement() *ast.BlockStatement {
 func (p *Parser) parseFunctionLiteral() ast.Expression {
 	lit := &ast.FunctionLiteral{Token: p.curToken}
 
-	if !p.expectPeek(token.LParen) {
+	if !p.expectPeek(token.LParen) || !p.parseSignature(lit) {
 		return nil
 	}
-
-	lit.Parameters = p.parseFunctionParameters()
-
-	if !p.expectPeek(token.LBrace) {
-		return nil
-	}
-
-	lit.Body = p.parseBlockStatement()
 
 	return lit
 }
@@ -491,30 +493,62 @@ func (p *Parser) parseMapLiteral() ast.Expression {
 	return lit
 }
 
-func (p *Parser) parseFunctionParameters() []*ast.Identifier {
-	identifiers := []*ast.Identifier{}
-
-	if p.peekTokenIs(token.RParen) {
+// parseSignature parses the parameters, the optional `-> type` and the
+// opening brace, starting at the `(`. it fills lit in and leaves the parser
+// on the `{`
+func (p *Parser) parseSignature(lit *ast.FunctionLiteral) bool {
+	lit.Parameters = []*ast.Identifier{}
+	lit.ParamTypes = []*ast.TypeAnnotation{}
+	for !p.peekTokenIs(token.RParen) {
+		if len(lit.Parameters) > 0 {
+			if !p.peekTokenIs(token.Comma) {
+				p.peekError(token.RParen)
+				return false
+			}
+			p.nextToken()
+		}
 		p.nextToken()
-		return identifiers
+		lit.Parameters = append(lit.Parameters, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+		var typ *ast.TypeAnnotation
+		if p.peekTokenIs(token.Colon) {
+			p.nextToken()
+			if typ = p.parseTypeAnnotation(); typ == nil {
+				return false
+			}
+		}
+		lit.ParamTypes = append(lit.ParamTypes, typ)
 	}
-
 	p.nextToken()
-	ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-	identifiers = append(identifiers, ident)
-
-	for p.peekTokenIs(token.Comma) {
+	if p.peekTokenIs(token.Arrow) {
 		p.nextToken()
-		p.nextToken()
-		ident := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
-		identifiers = append(identifiers, ident)
+		if lit.ReturnType = p.parseTypeAnnotation(); lit.ReturnType == nil {
+			return false
+		}
 	}
+	if !p.expectPeek(token.LBrace) {
+		return false
+	}
+	lit.Body = p.parseBlockStatement()
+	return true
+}
 
-	if !p.expectPeek(token.RParen) {
+// parseTypeAnnotation reads the type name after a `:` or `->`. `nil` and `fn`
+// are keywords so they come in as their own tokens
+func (p *Parser) parseTypeAnnotation() *ast.TypeAnnotation {
+	if !p.peekTokenIs(token.Ident) && !p.peekTokenIs(token.Nil) && !p.peekTokenIs(token.Function) {
+		p.peekError(token.Ident)
 		return nil
 	}
-
-	return identifiers
+	p.nextToken()
+	if _, ok := ast.TypeNames[p.curToken.Literal]; !ok {
+		hint := diag.DidYouMean(p.curToken.Literal, typeNames())
+		if alias, ok := typeAliases[p.curToken.Literal]; ok {
+			hint = fmt.Sprintf(" (did you mean %q?)", alias)
+		}
+		p.errors = append(p.errors, p.atCur(fmt.Sprintf("unknown type %q%s", p.curToken.Literal, hint)))
+		return nil
+	}
+	return &ast.TypeAnnotation{Token: p.curToken, Name: p.curToken.Literal}
 }
 
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
@@ -594,6 +628,8 @@ func (p *Parser) parsePattern() ast.Pattern {
 	switch {
 	case p.curTokenIs(token.Ident) && p.curToken.Literal == "_":
 		return &ast.WildcardPattern{Token: p.curToken}
+	case p.curTokenIs(token.Ident) && (p.curToken.Literal == "ok" || p.curToken.Literal == "err") && p.peekTokenIs(token.LParen):
+		return p.parseResultPattern()
 	case p.curTokenIs(token.Ident) && p.patternEndsAtPeek():
 		return &ast.BindingPattern{Token: p.curToken, Name: &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}}
 	case p.curTokenIs(token.LBracket):
@@ -611,10 +647,20 @@ func (p *Parser) parsePattern() ast.Pattern {
 
 func (p *Parser) patternEndsAtPeek() bool {
 	switch p.peekToken.Type {
-	case token.Arrow, token.If, token.Comma, token.RBracket, token.RBrace:
+	case token.Arrow, token.If, token.Comma, token.RBracket, token.RBrace, token.RParen:
 		return true
 	}
 	return false
+}
+
+func (p *Parser) parseResultPattern() ast.Pattern {
+	pat := &ast.ResultPattern{Token: p.curToken, Ok: p.curToken.Literal == "ok"}
+	p.nextToken()
+	p.nextToken()
+	if pat.Inner = p.parsePattern(); pat.Inner == nil || !p.expectPeek(token.RParen) {
+		return nil
+	}
+	return pat
 }
 
 func (p *Parser) parseArrayPattern() ast.Pattern {
@@ -695,6 +741,21 @@ func (p *Parser) parseExpressionList(end token.Type) []ast.Expression {
 	}
 
 	return list
+}
+
+// typeAliases are type names people bring from other languages
+var typeAliases = map[string]string{
+	"integer": "int", "i64": "int", "int64": "int", "double": "float", "f64": "float",
+	"str": "string", "boolean": "bool", "list": "array", "dict": "map",
+	"func": "fn", "function": "fn", "none": "nil", "null": "nil",
+}
+
+func typeNames() []string {
+	names := make([]string, 0, len(ast.TypeNames))
+	for name := range ast.TypeNames {
+		names = append(names, name)
+	}
+	return names
 }
 
 func (p *Parser) nextToken() {

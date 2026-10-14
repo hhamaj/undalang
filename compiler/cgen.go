@@ -3,6 +3,7 @@ package compiler
 import (
 	_ "embed"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -12,6 +13,12 @@ import (
 
 //go:embed runtime/unda_runtime.c
 var runtimeSource string
+
+var tagNames = map[string]string{
+	"INTEGER": "U_INT", "FLOAT": "U_FLOAT", "STRING": "U_STR", "BOOLEAN": "U_BOOL", "NIL": "U_NIL",
+	"ARRAY": "U_ARR", "MAP": "U_MAP", "FUNCTION": "U_FN", "BUILTIN": "U_BUILTIN", "MODULE": "U_MOD",
+	"RESULT": "U_RES",
+}
 
 var binops = map[string]string{
 	"+": "OP_ADD", "-": "OP_SUB", "*": "OP_MUL", "/": "OP_DIV", "%": "OP_MOD",
@@ -133,10 +140,22 @@ func (g *gen) function(mod *semantic.Module, info *semantic.FuncInfo) {
 	}
 	f.line("UValue *S = fr->slots;")
 	f.line("(void)S;")
+	lit := info.Lit
 	for i, slot := range info.ParamSlots {
+		if i < len(lit.ParamTypes) && lit.ParamTypes[i] != nil {
+			f.checkType(fmt.Sprintf("argv[%d]", i), lit.ParamTypes[i], "parameter "+lit.Parameters[i].Value+" expects")
+		}
 		f.line("S[%d] = argv[%d];", slot, i)
 	}
-	result := f.statements(info.Lit.Body.Statements)
+	result := f.statements(lit.Body.Statements)
+	if lit.ReturnType != nil {
+		var at ast.Node = lit.Body
+		if n := len(lit.Body.Statements); n > 0 {
+			at = lit.Body.Statements[n-1]
+		}
+		f.loc(at)
+		f.checkType(result, lit.ReturnType, returnLabel(lit))
+	}
 	f.line("return %s;", result)
 	fmt.Fprintf(&g.defs, "static UValue fn_%d(UFrame *up, int argc, UValue *argv) {\n%s}\n\n", info.ID, f.body.String())
 }
@@ -166,6 +185,23 @@ func (f *fgen) loc(node ast.Node) {
 	f.line("U_LOC(u_file_%d, %d, %d);", f.mod.ID, line, col)
 }
 
+// checkType emits the runtime check for an annotation. it uses whatever
+// location is current, callers set it first when they need a different one
+func (f *fgen) checkType(v string, t *ast.TypeAnnotation, what string) {
+	tags := make([]string, 0, len(ast.TypeNames[t.Name]))
+	for _, name := range ast.TypeNames[t.Name] {
+		tags = append(tags, "(1u << "+tagNames[name]+")")
+	}
+	f.line("u_check_type(%s, %s, %s);", v, strings.Join(tags, " | "), cString(what+" "+t.Name))
+}
+
+func returnLabel(lit *ast.FunctionLiteral) string {
+	if lit.Name != "" {
+		return lit.Name + " returns"
+	}
+	return "function returns"
+}
+
 func (f *fgen) slot(c semantic.Candidate) string {
 	if c.Depth == 0 {
 		return fmt.Sprintf("S[%d]", c.Sym.Slot)
@@ -191,6 +227,10 @@ func (f *fgen) stmt(s ast.Statement) string {
 	switch s := s.(type) {
 	case *ast.LetStatement:
 		v := f.expr(s.Value)
+		if s.Type != nil {
+			f.loc(s)
+			f.checkType(v, s.Type, s.Name.Value+" expects")
+		}
 		sym := f.mod.Decls[s]
 		f.line("S[%d] = %s;", sym.Slot, v)
 		return v
@@ -200,6 +240,10 @@ func (f *fgen) stmt(s ast.Statement) string {
 		return v
 	case *ast.ReturnStatement:
 		v := f.expr(s.ReturnValue)
+		if lit := f.info.Lit; lit != nil && lit.ReturnType != nil {
+			f.loc(s)
+			f.checkType(v, lit.ReturnType, returnLabel(lit))
+		}
 		f.line("return %s;", v)
 		return "uv_nil()"
 	case *ast.ImportStatement:
@@ -284,7 +328,7 @@ func (f *fgen) assign(s *ast.AssignStatement, v string) {
 	for i, cand := range ref.Candidates {
 		lv := f.slot(cand)
 		if cand.Direct {
-			f.line("%s = %s;", lv, v)
+			f.assignChecked(s, cand.Sym, lv, v)
 			break
 		}
 		f.line("if (%s.tag != U_UNDEF) {", lv)
@@ -293,7 +337,7 @@ func (f *fgen) assign(s *ast.AssignStatement, v string) {
 			f.loc(s)
 			f.line("u_panic(\"cannot assign to immutable binding \\\"%s\\\"\");", ref.Name)
 		} else {
-			f.line("%s = %s;", lv, v)
+			f.assignChecked(s, cand.Sym, lv, v)
 		}
 		f.indent--
 		f.line("} else {")
@@ -308,6 +352,14 @@ func (f *fgen) assign(s *ast.AssignStatement, v string) {
 		f.indent--
 		f.line("}")
 	}
+}
+
+func (f *fgen) assignChecked(s *ast.AssignStatement, sym *semantic.Symbol, lv, v string) {
+	if sym.Annot != nil {
+		f.loc(s)
+		f.checkType(v, sym.Annot, sym.Name+" expects")
+	}
+	f.line("%s = %s;", lv, v)
 }
 
 func (f *fgen) identifier(id *ast.Identifier) string {
@@ -353,7 +405,7 @@ func (f *fgen) identifier(id *ast.Identifier) string {
 func (f *fgen) expr(e ast.Expression) string {
 	switch e := e.(type) {
 	case *ast.IntegerLiteral:
-		return fmt.Sprintf("uv_int(INT64_C(%d))", e.Value)
+		return intLiteral(e.Value)
 	case *ast.FloatLiteral:
 		return fmt.Sprintf("uv_float(%s)", strconv.FormatFloat(e.Value, 'g', -1, 64)+cFloatSuffix(e.Value))
 	case *ast.StringLiteral:
@@ -368,6 +420,9 @@ func (f *fgen) expr(e ast.Expression) string {
 	case *ast.Identifier:
 		return f.identifier(e)
 	case *ast.PrefixExpression:
+		if v, ok := foldInt(e); ok {
+			return intLiteral(v)
+		}
 		r := f.expr(e.Right)
 		t := f.temp()
 		if e.Operator == "!" {
@@ -391,7 +446,11 @@ func (f *fgen) expr(e ast.Expression) string {
 		} else {
 			callee = f.expr(e.Right)
 		}
-		return f.call(e, callee, args)
+		calleeExpr := e.Right
+		if call, ok := e.Right.(*ast.CallExpression); ok {
+			calleeExpr = call.Function
+		}
+		return f.call(e, calleeExpr, callee, args)
 	case *ast.IfExpression:
 		cond := f.expr(e.Condition)
 		t := f.temp()
@@ -466,13 +525,61 @@ func (f *fgen) expr(e ast.Expression) string {
 		for _, a := range e.Arguments {
 			args = append(args, f.expr(a))
 		}
-		return f.call(e, callee, args)
+		return f.call(e, e.Function, callee, args)
+	case *ast.TryExpression:
+		return f.try(e)
 	}
 	panic(fmt.Sprintf("cgen: unsupported expression %T", e))
 }
 
+// try mirrors evaluator.evalTry. inside a function an err result is returned
+// as is, at the top level there's nothing to return from
+func (f *fgen) try(e *ast.TryExpression) string {
+	v := f.expr(e.Value)
+	f.loc(e)
+	f.line("u_want_result(%s);", v)
+	f.line("if (!%s.as.r->ok) {", v)
+	f.indent++
+	if lit := f.info.Lit; lit == nil {
+		f.line("u_unhandled(%s);", v)
+	} else {
+		if lit.ReturnType != nil {
+			f.checkType(v, lit.ReturnType, returnLabel(lit))
+		}
+		f.line("return %s;", v)
+	}
+	f.indent--
+	f.line("}")
+	t := f.temp()
+	f.line("UValue %s = %s.as.r->v;", t, v)
+	return t
+}
+
+// fastInt is the C for an operator when both sides are ints. it has to give
+// exactly what u_binop gives, so + - * wrap around instead of overflowing
+var fastInt = map[string]string{
+	"+":  "uv_int((int64_t)((uint64_t)%[1]s.as.i + (uint64_t)%[2]s.as.i))",
+	"-":  "uv_int((int64_t)((uint64_t)%[1]s.as.i - (uint64_t)%[2]s.as.i))",
+	"*":  "uv_int((int64_t)((uint64_t)%[1]s.as.i * (uint64_t)%[2]s.as.i))",
+	"<":  "uv_bool(%[1]s.as.i < %[2]s.as.i)",
+	">":  "uv_bool(%[1]s.as.i > %[2]s.as.i)",
+	"<=": "uv_bool(%[1]s.as.i <= %[2]s.as.i)",
+	">=": "uv_bool(%[1]s.as.i >= %[2]s.as.i)",
+	"==": "uv_bool(%[1]s.as.i == %[2]s.as.i)",
+	"!=": "uv_bool(%[1]s.as.i != %[2]s.as.i)",
+	// a positive divisor can't hit division by zero or INT64_MIN / -1
+	"/": "uv_int(%[1]s.as.i / %[2]s.as.i)",
+	"%": "uv_int(%[1]s.as.i %% %[2]s.as.i)",
+}
+
 func (f *fgen) infix(e *ast.InfixExpression) string {
 	op := binops[e.Operator]
+	if v, ok := foldInt(e); ok {
+		return intLiteral(v)
+	}
+	if b, ok := foldCompare(e); ok {
+		return fmt.Sprintf("uv_bool(%t)", b)
+	}
 	l := f.expr(e.Left)
 	t := f.temp()
 	if e.Operator == "&&" || e.Operator == "||" {
@@ -494,20 +601,119 @@ func (f *fgen) infix(e *ast.InfixExpression) string {
 		return t
 	}
 	r := f.expr(e.Right)
+	if fast, ok := fastInt[e.Operator]; ok {
+		cond := fmt.Sprintf("%s.tag == U_INT && %s.tag == U_INT", l, r)
+		if e.Operator == "/" || e.Operator == "%" {
+			cond += fmt.Sprintf(" && %s.as.i > 0", r)
+		}
+		// the location only matters when u_binop might fail, so only the
+		// slow path sets it
+		line, col := ast.Position(e)
+		f.line("UValue %s = (%s) ? %s : (U_LOC(u_file_%d, %d, %d), u_binop(%s, %s, %s));",
+			t, cond, fmt.Sprintf(fast, l, r), f.mod.ID, line, col, op, l, r)
+		return t
+	}
 	f.loc(e)
 	f.line("UValue %s = u_binop(%s, %s, %s);", t, op, l, r)
 	return t
 }
 
-func (f *fgen) call(node ast.Node, callee string, args []string) string {
+// foldInt works out integer arithmetic on literals at compile time, with the
+// same wrap-around as the runtime. division is left alone so division by zero
+// still fails where it's written
+func foldInt(e ast.Expression) (int64, bool) {
+	switch e := e.(type) {
+	case *ast.IntegerLiteral:
+		return e.Value, true
+	case *ast.PrefixExpression:
+		if v, ok := foldInt(e.Right); ok && e.Operator == "-" {
+			return -v, true
+		}
+	case *ast.InfixExpression:
+		l, lok := foldInt(e.Left)
+		r, rok := foldInt(e.Right)
+		if !lok || !rok {
+			return 0, false
+		}
+		switch e.Operator {
+		case "+":
+			return l + r, true
+		case "-":
+			return l - r, true
+		case "*":
+			return l * r, true
+		}
+	}
+	return 0, false
+}
+
+func foldCompare(e *ast.InfixExpression) (bool, bool) {
+	l, lok := foldInt(e.Left)
+	r, rok := foldInt(e.Right)
+	if !lok || !rok {
+		return false, false
+	}
+	switch e.Operator {
+	case "<":
+		return l < r, true
+	case ">":
+		return l > r, true
+	case "<=":
+		return l <= r, true
+	case ">=":
+		return l >= r, true
+	case "==":
+		return l == r, true
+	case "!=":
+		return l != r, true
+	}
+	return false, false
+}
+
+func intLiteral(v int64) string {
+	if v == math.MinInt64 {
+		return "uv_int(INT64_MIN)"
+	}
+	return fmt.Sprintf("uv_int(INT64_C(%d))", v)
+}
+
+func (f *fgen) call(node ast.Node, calleeExpr ast.Expression, callee string, args []string) string {
 	t := f.temp()
 	f.loc(node)
-	if len(args) == 0 {
-		f.line("UValue %s = u_call(%s, 0, NULL);", t, callee)
-	} else {
-		f.line("UValue %s = u_call(%s, %d, (UValue[]){%s});", t, callee, len(args), strings.Join(args, ", "))
+	argv := "NULL"
+	if len(args) > 0 {
+		argv = "(UValue[]){" + strings.Join(args, ", ") + "}"
 	}
+	if info := f.directCallee(calleeExpr, len(args)); info != nil {
+		// same checks u_call would make, minus the ones the checker already
+		// proved: it's a function and the argument count fits
+		f.line("if (u_depth >= U_MAX_DEPTH) u_panic(\"maximum call depth exceeded\");")
+		f.line("u_depth++;")
+		f.line("UValue %s = fn_%d(%s.as.fn->env, %d, %s);", t, info.ID, callee, len(args), argv)
+		f.line("u_depth--;")
+		return t
+	}
+	f.line("UValue %s = u_call(%s, %d, %s);", t, callee, len(args), argv)
 	return t
+}
+
+// directCallee returns the function a call is known to reach, if any. that's
+// a plain name bound once to a function literal with nothing else it could
+// resolve to
+func (f *fgen) directCallee(e ast.Expression, argc int) *semantic.FuncInfo {
+	id, ok := e.(*ast.Identifier)
+	if !ok {
+		return nil
+	}
+	ref := f.mod.Refs[id]
+	if ref == nil || len(ref.Candidates) != 1 || ref.Builtin != "" {
+		return nil
+	}
+	lit := ref.Candidates[0].Sym.Func
+	if lit == nil || len(lit.Parameters) != argc {
+		return nil
+	}
+	return f.mod.FuncOf[lit]
 }
 
 func (f *fgen) matchArms(arms []ast.MatchArm, value, result string) {
@@ -575,6 +781,15 @@ func (f *fgen) pattern(p ast.Pattern, value, ok string) {
 		if p.Rest != nil {
 			f.line("if (%s) S[%d] = uv_arrv(u_arr_tail(%s.as.a, %d));", ok, f.mod.Bindings[p.Rest].Slot, value, len(p.Elements))
 		}
+	case *ast.ResultPattern:
+		f.line("if (%s) %s = %s.tag == U_RES && %s.as.r->ok == %t;", ok, ok, value, value, p.Ok)
+		f.line("if (%s) {", ok)
+		f.indent++
+		item := f.temp()
+		f.line("UValue %s = %s.as.r->v;", item, value)
+		f.pattern(p.Inner, item, ok)
+		f.indent--
+		f.line("}")
 	case *ast.MapPattern:
 		f.line("if (%s) %s = %s.tag == U_MAP;", ok, ok, value)
 		for i, keyExpr := range p.Keys {
@@ -604,16 +819,12 @@ func (f *fgen) pattern(p ast.Pattern, value, ok string) {
 // functionInspect does the same thing as object.Function.Inspect for a
 // literal
 func functionInspect(lit *ast.FunctionLiteral) string {
-	params := make([]string, 0, len(lit.Parameters))
-	for _, p := range lit.Parameters {
-		params = append(params, p.String())
-	}
 	var out strings.Builder
 	out.WriteString("fn")
 	if lit.Name != "" {
 		out.WriteString(" " + lit.Name)
 	}
-	out.WriteString("(" + strings.Join(params, ", ") + ") {\n")
+	out.WriteString(ast.Signature(lit.Parameters, lit.ParamTypes, lit.ReturnType) + " {\n")
 	out.WriteString(lit.Body.String())
 	out.WriteString("\n}")
 	return out.String()

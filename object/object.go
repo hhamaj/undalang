@@ -28,6 +28,7 @@ const (
 	ModuleObj      = "MODULE"
 	BreakObj       = "BREAK"
 	ContinueObj    = "CONTINUE"
+	ResultObj      = "RESULT"
 )
 
 type Object interface {
@@ -39,7 +40,23 @@ type Integer struct {
 	Value int64
 }
 
-func (i *Integer) Type() Type      { return IntegerObj }
+func (i *Integer) Type() Type { return IntegerObj }
+
+// small ints are shared so counters and indexes don't allocate. that's only
+// fine because nothing ever changes an Integer after making it
+var smallInts = func() (out [1280]Integer) {
+	for i := range out {
+		out[i].Value = int64(i) - 256
+	}
+	return out
+}()
+
+func NewInt(v int64) *Integer {
+	if v >= -256 && v < 1024 {
+		return &smallInts[v+256]
+	}
+	return &Integer{Value: v}
+}
 func (i *Integer) Inspect() string { return fmt.Sprintf("%d", i.Value) }
 
 type Float struct {
@@ -101,6 +118,8 @@ func (e *Error) Inspect() string {
 
 type Function struct {
 	Parameters []*ast.Identifier
+	ParamTypes []*ast.TypeAnnotation
+	ReturnType *ast.TypeAnnotation
 	Body       *ast.BlockStatement
 	Env        *Environment
 	Name       string
@@ -111,22 +130,39 @@ type Function struct {
 }
 
 func (f *Function) Type() Type { return FunctionObj }
+
+// ReturnLabel names the function in return type errors
+func (f *Function) ReturnLabel() string {
+	if f.Name != "" {
+		return f.Name + " returns"
+	}
+	return "function returns"
+}
 func (f *Function) Inspect() string {
 	var out bytes.Buffer
-	params := []string{}
-	for _, p := range f.Parameters {
-		params = append(params, p.String())
-	}
 	out.WriteString("fn")
 	if f.Name != "" {
 		out.WriteString(" " + f.Name)
 	}
-	out.WriteString("(")
-	out.WriteString(strings.Join(params, ", "))
-	out.WriteString(") {\n")
+	out.WriteString(ast.Signature(f.Parameters, f.ParamTypes, f.ReturnType))
+	out.WriteString(" {\n")
 	out.WriteString(f.Body.String())
 	out.WriteString("\n}")
 	return out.String()
+}
+
+// Result is what ok(v) and err(e) make
+type Result struct {
+	Ok    bool
+	Value Object
+}
+
+func (r *Result) Type() Type { return ResultObj }
+func (r *Result) Inspect() string {
+	if r.Ok {
+		return "ok(" + r.Value.Inspect() + ")"
+	}
+	return "err(" + r.Value.Inspect() + ")"
 }
 
 type BuiltinFunction func(args ...Object) Object

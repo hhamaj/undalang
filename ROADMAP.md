@@ -163,8 +163,23 @@ Success criteria:
 
 ---
 
-### Phase 3 — Stronger Type System and Performance
+### Phase 3 — Stronger Type System and Performance ✅
 Goal: improve safety and correctness while preserving readability.
+
+Status:
+- optional type annotations on `let`, parameters and return types (`fn add(a: int, b: int) -> int`), checked statically where provable and at runtime in both backends
+- the checker uses annotations as type information, so typed code gets more static errors
+- `ok(v)`/`err(e)` result values, `ok(...)`/`err(...)` match patterns and the `?` operator, in both backends
+- `try_` versions of the builtins that can fail at runtime (`try_read_file`, `try_write_file`, `try_append_file`, `json.try_parse`, `process.try_run`, `shell.try_run`)
+- fixed a native GC bug where an inlined program body could keep values above the scanned stack range
+- C backend optimizations: integer arithmetic and comparisons inline with a tag check (the generic path only runs, and only sets the error location, when the operands aren't both ints), direct calls to functions bound once with `fn`, and folding of constant integer expressions
+- interpreter optimizations: small slice-based scopes instead of maps, no scope for blocks that declare nothing, shared small integers
+- diagnostics suggest close matches for unknown names, module members, type names and standard modules (`did you mean "upper"?`)
+- deferred to Phase 4: element types such as `array[int]`. checking them at runtime means walking the whole collection on every typed assignment, and they belong with user-defined types and generics
+
+Benchmark results (fib(30), counting primes below 200000, map/filter/reduce over 1M ints), compared with the start of the phase:
+- native: 36 → 11 ms, 141 → 20 ms, 57 → 55 ms (C: 2, 13, 11 ms; Python 3.14: 98, 936, 140 ms)
+- interpreter: 1668 → 706 ms, 3258 → 1556 ms, 899 → 431 ms
 
 Deliverables:
 - optional type annotations
@@ -185,6 +200,7 @@ Goal: progressively add low-level control for advanced users.
 
 Potential deliverables:
 - structs and user-defined data layouts
+- element types for collections (`array[int]`, `map[string, int]`), designed together with user-defined types
 - pointers/references
 - manual memory-control primitives (carefully scoped)
 - C FFI

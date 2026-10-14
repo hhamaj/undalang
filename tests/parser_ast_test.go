@@ -136,6 +136,27 @@ func parse(t *testing.T, input string) *ast.Program {
 	return program
 }
 
+func TestParserTypeAnnotations(t *testing.T) {
+	tests := map[string]string{
+		"let x: int = 5":                               "let x: int = 5",
+		"let mut s: string = \"a\"":                    `let mut s: string = "a"`,
+		"fn add(a: int, b) -> int { a }":               "let add = fn add(a: int, b) -> int a",
+		"let f = fn(x: nil, y: fn) -> any { x }":       "let f = fn(x: nil, y: fn) -> any x",
+		"let g = fn() -> number { 1 }":                 "let g = fn() -> number 1",
+		"match 1 { n -> fn(v: float) -> float { v } }": "match 1 { n -> fn(v: float) -> float v }",
+		"let v = f(x)? + m.k?":                         "let v = ((f(x)?) + (m.k?))",
+		"match r { ok(v) -> v, err(_) -> 0 }":          "match r { ok(v) -> v, err(_) -> 0 }",
+		"match r { ok([a, ..]) if a -> a, err -> 1 }":  "match r { ok([a, ..]) if a -> a, err -> 1 }",
+		"fn f() -> result { ok(1) }":                   "let f = fn f() -> result ok(1)",
+	}
+	for input, want := range tests {
+		program := parse(t, input)
+		if got := program.String(); got != want {
+			t.Errorf("%q:\ngot  %q\nwant %q", input, got, want)
+		}
+	}
+}
+
 func TestParserReportsOneErrorPerStatement(t *testing.T) {
 	tests := map[string][]string{
 		"println(1 +)":            {`line 1:12 unexpected ")"`},
@@ -143,6 +164,11 @@ func TestParserReportsOneErrorPerStatement(t *testing.T) {
 		"let s = \"abc":           {"line 1:9 unterminated string literal"},
 		"let x = @":               {`line 1:9 unexpected character "@"`},
 		"let = 5\nlet y = 2\nz +": {"line 1:5 expected next token to be IDENT, got = instead", "line 4:1 unexpected end of input"},
+		"let x: foo = 1":          {`line 1:8 unknown type "foo"`},
+		"let x: integer = 1":      {`line 1:8 unknown type "integer" (did you mean "int"?)`},
+		"let x: strin = \"\"":     {`line 1:8 unknown type "strin" (did you mean "string"?)`},
+		"fn f(a: ) { a }":         {"line 1:9 expected next token to be IDENT, got ) instead"},
+		"fn f() -> { 1 }":         {"line 1:11 expected next token to be IDENT, got { instead"},
 	}
 	for input, want := range tests {
 		p := parser.New(lexer.New(input + "\n"))

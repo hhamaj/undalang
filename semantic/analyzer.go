@@ -35,7 +35,13 @@ type Symbol struct {
 	Level   int
 	Mutable bool
 	Type    Type
-	decls   int
+	// Annot is the declared type, assignments get checked against it
+	Annot *ast.TypeAnnotation
+	// Func is set when the binding can only ever hold this one function
+	// literal: declared once, immutable, initialized with the literal. the C
+	// backend calls such functions directly
+	Func  *ast.FunctionLiteral
+	decls int
 }
 
 // Candidate is a binding an identifier might refer to, Depth frames up.
@@ -246,6 +252,9 @@ type checker struct {
 	queue []pending
 	diags []diag.Diagnostic
 	loops int
+	// fn is the function literal whose body is being checked, nil at the top
+	// level
+	fn *ast.FunctionLiteral
 }
 
 func (c *checker) run() {
@@ -300,30 +309,75 @@ func (c *checker) function(p pending) {
 	lit := p.fn.Lit
 	params := newScope(p.scope, p.fn)
 	params.boundary = true
-	for _, param := range lit.Parameters {
-		sym := c.declare(params, param.Value, false, unknown())
+	for i, param := range lit.Parameters {
+		sym := c.declare(params, param.Value, false, unknown(), paramAnnot(lit, i))
 		p.fn.ParamSlots = append(p.fn.ParamSlots, sym.Slot)
 	}
 	outerLoops := c.loops
 	c.loops = 0
-	c.block(lit.Body, newScope(params, p.fn))
+	c.fn = lit
+	t := c.block(lit.Body, newScope(params, p.fn))
+	if !fits(t, lit.ReturnType) {
+		var at ast.Node = lit.Body
+		if n := len(lit.Body.Statements); n > 0 {
+			at = lit.Body.Statements[n-1]
+		}
+		c.errorf(at, "type mismatch: %s %s, got %s", returnLabel(lit), lit.ReturnType.Name, t.Kind)
+	}
+	c.fn = nil
 	c.loops = outerLoops
 }
 
-func (c *checker) declare(sc *scope, name string, mutable bool, t Type) *Symbol {
+func paramAnnot(lit *ast.FunctionLiteral, i int) *ast.TypeAnnotation {
+	if i < len(lit.ParamTypes) {
+		return lit.ParamTypes[i]
+	}
+	return nil
+}
+
+// returnLabel names a function in return type errors, the same way the
+// interpreter does
+func returnLabel(lit *ast.FunctionLiteral) string {
+	if lit.Name != "" {
+		return lit.Name + " returns"
+	}
+	return "function returns"
+}
+
+func (c *checker) declare(sc *scope, name string, mutable bool, t Type, annot *ast.TypeAnnotation) *Symbol {
 	if sym, ok := sc.names[name]; ok {
 		sym.decls++
+		sym.Func = nil
 		sym.Mutable = mutable
-		sym.Type = unknown()
+		sym.Type = kindType(AnnotationKind(annot))
+		sym.Annot = annot
 		return sym
 	}
-	if mutable {
+	switch {
+	case annot != nil && mutable:
+		t = kindType(AnnotationKind(annot))
+	case annot != nil:
+		t = narrow(t, annot)
+	case mutable:
 		t = unknown()
 	}
-	sym := &Symbol{Name: name, Slot: sc.fn.NumSlots, Level: sc.fn.Level, Mutable: mutable, Type: t, decls: 1}
+	sym := &Symbol{Name: name, Slot: sc.fn.NumSlots, Level: sc.fn.Level, Mutable: mutable, Type: t, Annot: annot, decls: 1}
 	sc.fn.NumSlots++
 	sc.names[name] = sym
 	return sym
+}
+
+// visibleNames lists every name that could be meant at sc, for suggestions.
+// builtins only count where they can be read, not assigned to
+func visibleNames(sc *scope, withBuiltins bool) []string {
+	var names []string
+	for s := sc; s != nil; s = s.parent {
+		names = append(names, sortedKeys(s.names)...)
+	}
+	if withBuiltins {
+		names = append(names, sortedKeys(GlobalBuiltins)...)
+	}
+	return names
 }
 
 // lookup collects the bindings name might refer to, from sc outward. bindings
@@ -359,14 +413,29 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 	switch s := s.(type) {
 	case *ast.LetStatement:
 		t := c.expr(s.Value, sc)
-		c.mod.Decls[s] = c.declare(sc, s.Name.Value, s.Mutable, t)
+		if !fits(t, s.Type) {
+			c.errorf(s, "type mismatch: %s expects %s, got %s", s.Name.Value, s.Type.Name, t.Kind)
+		}
+		// a redeclared name shares its slot with the old one, and the native
+		// backend checks assignments per slot, so both have to agree on the type
+		if old, ok := sc.names[s.Name.Value]; ok && annotName(old.Annot) != annotName(s.Type) {
+			c.errorf(s, "cannot redeclare %s with a different type", s.Name.Value)
+		}
+		sym := c.declare(sc, s.Name.Value, s.Mutable, t, s.Type)
+		if lit, ok := s.Value.(*ast.FunctionLiteral); ok && sym.decls == 1 && !s.Mutable {
+			sym.Func = lit
+		}
+		c.mod.Decls[s] = sym
 		return t
 	case *ast.AssignStatement:
 		t := c.expr(s.Value, sc)
-		c.assign(s, sc)
+		c.assign(s, sc, t)
 		return t
 	case *ast.ReturnStatement:
-		c.expr(s.ReturnValue, sc)
+		t := c.expr(s.ReturnValue, sc)
+		if c.fn != nil && !fits(t, c.fn.ReturnType) {
+			c.errorf(s, "type mismatch: %s %s, got %s", returnLabel(c.fn), c.fn.ReturnType.Name, t.Kind)
+		}
 		return kindType(KNever)
 	case *ast.ImportStatement:
 		t := c.importStmt(s)
@@ -374,7 +443,7 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 		if s.Alias != nil {
 			alias = s.Alias.Value
 		}
-		c.mod.Decls[s] = c.declare(sc, alias, false, t)
+		c.mod.Decls[s] = c.declare(sc, alias, false, t, nil)
 		return t
 	case *ast.ExpressionStatement:
 		return c.expr(s.Expression, sc)
@@ -395,7 +464,7 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 			if _, dup := vars.names[v.Value]; dup {
 				c.errorf(v, "duplicate loop variable %s", v.Value)
 			}
-			c.mod.Bindings[v] = c.declare(vars, v.Value, false, unknown())
+			c.mod.Bindings[v] = c.declare(vars, v.Value, false, unknown(), nil)
 		}
 		c.loops++
 		c.block(s.Body, newScope(vars, vars.fn))
@@ -429,11 +498,18 @@ func (c *checker) loopScope(loop ast.Statement, body *ast.BlockStatement, sc *sc
 	return newScope(sc, frame)
 }
 
-func (c *checker) assign(s *ast.AssignStatement, sc *scope) {
+func annotName(a *ast.TypeAnnotation) string {
+	if a == nil {
+		return ""
+	}
+	return a.Name
+}
+
+func (c *checker) assign(s *ast.AssignStatement, sc *scope, t Type) {
 	name := s.Name.Value
 	cands := lookup(sc, name)
 	if len(cands) == 0 {
-		c.errorf(s, "identifier not found: %s", name)
+		c.errorf(s, "identifier not found: %s%s", name, diag.DidYouMean(name, visibleNames(sc, false)))
 		return
 	}
 	anyMutable := false
@@ -442,6 +518,8 @@ func (c *checker) assign(s *ast.AssignStatement, sc *scope) {
 	}
 	if !anyMutable || (cands[0].Direct && !cands[0].Sym.Mutable) {
 		c.errorf(s, "cannot assign to immutable binding %q", name)
+	} else if cands[0].Direct && !fits(t, cands[0].Sym.Annot) {
+		c.errorf(s, "type mismatch: %s expects %s, got %s", name, cands[0].Sym.Annot.Name, t.Kind)
 	}
 	c.mod.Assigns[s] = &Ref{Name: name, Candidates: cands}
 }
@@ -472,7 +550,13 @@ func (c *checker) importStmt(s *ast.ImportStatement) Type {
 	if !ok {
 		input, err := os.ReadFile(abs)
 		if err != nil {
-			c.errorf(s, "import %q failed: %v", path, err)
+			hint := ""
+			if !strings.ContainsAny(path, "/.") {
+				if hint = diag.DidYouMean(path, sortedKeys(StdModules)); hint != "" {
+					hint = strings.Replace(hint, "did you mean", "did you mean the standard module", 1)
+				}
+			}
+			c.errorf(s, "import %q failed: %v%s", path, err, hint)
 			return unknown()
 		}
 		mod = c.a.load(abs, diag.DisplayPath(abs), string(input))
@@ -547,7 +631,7 @@ func (c *checker) expr(e ast.Expression, sc *scope) Type {
 		fn := c.newFunc(e, sc.fn)
 		sc.fn.markHeap()
 		c.queue = append(c.queue, pending{fn: fn, scope: sc})
-		return Type{Kind: KFunction, Arity: len(e.Parameters)}
+		return Type{Kind: KFunction, Arity: len(e.Parameters), Func: e}
 	case *ast.ArrayLiteral:
 		c.exprs(e.Elements, sc)
 		return kindType(KArray)
@@ -585,6 +669,15 @@ func (c *checker) expr(e ast.Expression, sc *scope) Type {
 	case *ast.CallExpression:
 		callee := c.expr(e.Function, sc)
 		return c.call(e, callee, c.exprs(e.Arguments, sc))
+	case *ast.TryExpression:
+		t := c.expr(e.Value, sc)
+		if t.Kind != KNever && t.Kind&KResult == 0 {
+			c.errorf(e, "? expects RESULT, got %s", t.Kind)
+		}
+		if c.fn != nil && c.fn.ReturnType != nil && AnnotationKind(c.fn.ReturnType)&KResult == 0 {
+			c.errorf(e, "type mismatch: %s %s, got RESULT", returnLabel(c.fn), c.fn.ReturnType.Name)
+		}
+		return unknown()
 	}
 	return unknown()
 }
@@ -595,13 +688,15 @@ func (c *checker) pattern(p ast.Pattern, sc *scope) {
 		if _, dup := sc.names[id.Value]; dup {
 			c.errorf(id, "duplicate binding %s in pattern", id.Value)
 		}
-		c.mod.Bindings[id] = c.declare(sc, id.Value, false, unknown())
+		c.mod.Bindings[id] = c.declare(sc, id.Value, false, unknown(), nil)
 	}
 	switch p := p.(type) {
 	case *ast.BindingPattern:
 		bind(p.Name)
 	case *ast.ValuePattern:
 		c.expr(p.Value, sc)
+	case *ast.ResultPattern:
+		c.pattern(p.Inner, sc)
 	case *ast.ArrayPattern:
 		for _, el := range p.Elements {
 			c.pattern(el, sc)
@@ -643,7 +738,7 @@ func (c *checker) identifier(id *ast.Identifier, sc *scope) Type {
 		ref.Builtin = id.Value
 	}
 	if len(ref.Candidates) == 0 && ref.Builtin == "" {
-		c.errorf(id, "identifier not found: %s", id.Value)
+		c.errorf(id, "identifier not found: %s%s", id.Value, diag.DidYouMean(id.Value, visibleNames(sc, true)))
 		return unknown()
 	}
 	c.mod.Refs[id] = ref
@@ -665,8 +760,22 @@ func (c *checker) call(node ast.Node, callee Type, args []Type) Type {
 	case KFunction:
 		if callee.Arity >= 0 && callee.Arity != len(args) {
 			c.errorf(node, "wrong number of arguments: expected %d, got %d", callee.Arity, len(args))
+			return unknown()
 		}
-		return unknown()
+		lit := callee.Func
+		if lit == nil {
+			return unknown()
+		}
+		for i, arg := range args {
+			if a := paramAnnot(lit, i); !fits(arg, a) {
+				c.errorf(node, "type mismatch: parameter %s expects %s, got %s", lit.Parameters[i].Value, a.Name, arg.Kind)
+				break
+			}
+		}
+		if lit.ReturnType == nil {
+			return unknown()
+		}
+		return kindType(AnnotationKind(lit.ReturnType))
 	case KBuiltin:
 		s := callee.Builtin
 		if s == nil {
@@ -738,7 +847,8 @@ func (c *checker) member(e *ast.MemberExpression, obj Type) Type {
 	}
 	t, ok := obj.Module.Members[e.Property.Value]
 	if !ok {
-		c.errorf(e, "module %q has no member %q", obj.Module.Name, e.Property.Value)
+		hint := diag.DidYouMean(e.Property.Value, sortedKeys(obj.Module.Members))
+		c.errorf(e, "module %q has no member %q%s", obj.Module.Name, e.Property.Value, hint)
 		return unknown()
 	}
 	if c.a.opts.Native && t.Builtin != nil && t.Builtin.NativeUnsupported {

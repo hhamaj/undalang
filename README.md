@@ -36,6 +36,8 @@ runtime error: main.unda:6:20: type mismatch: INTEGER + STRING
 
 `unda build` lowers the program to C and compiles it with the system C compiler. The native executable behaves like the interpreter: same output formatting, same error messages and locations, and the same standard library. The test suite enforces this by running every program through both backends and comparing stdout, stderr, and the exit code.
 
+The generated code does integer arithmetic and comparisons inline and calls functions declared with `fn` directly, falling back to the general (and error-reporting) path only when it has to, so it runs well ahead of the interpreter: about 9x faster than Python 3.14 on recursive calls and 45x on integer loops in our measurements.
+
 Native executables free unused memory with a conservative mark-and-sweep garbage collector. It runs once the program has allocated more than its live heap (at least 8 MiB); set `UNDA_GC_THRESHOLD=<bytes>` to change the minimum.
 
 Current limitations:
@@ -95,6 +97,74 @@ fn describe(v) {
 }
 ```
 
+## Type Annotations
+
+Types are optional. Bindings, parameters and return values can carry one, untyped code works exactly as before.
+
+```unda
+let mut count: int = 0
+
+fn add(a: int, b: int) -> int {
+    return a + b
+}
+
+let label = fn(name: string, value) -> string { name + ": " + type(value) }
+```
+
+The types are `int`, `float`, `number` (int or float), `string`, `bool`, `nil`, `array`, `map`, `fn` (functions and builtins), `module`, `result` and `any`.
+
+`unda check` reports mismatches it can prove without running the program, and typed bindings and parameters give it more to work with:
+
+```text
+main.unda:1:28: error: type mismatch: f returns string, got INTEGER
+  1 | fn f(a: int) -> string { a + 1 }
+    |                            ^
+```
+
+Everything else is checked at runtime, in both backends: `let` and assignments to typed bindings, arguments to typed parameters, and the value a typed function returns (whether through `return` or by falling off the end of its body).
+
+```text
+runtime error: main.unda:3:1: type mismatch: parameter a expects int, got STRING
+```
+
+A name redeclared in the same scope has to keep its type.
+
+## Errors as Values
+
+Errors you expect are values: `ok(value)` or `err(reason)`. `match` takes them apart, and `?` after an expression unwraps an `ok` or returns the `err` from the current function right away.
+
+```unda
+fn parse_port(s: string) -> result {
+    match s {
+        "80" -> ok(80),
+        _ -> err("not a port: " + s),
+    }
+}
+
+fn parse_addr(host: string, port: string) -> result {
+    let p = parse_port(port)?
+    ok({"host": host, "port": p})
+}
+
+match parse_addr("localhost", "x") {
+    ok(a) -> println(a.host, a.port),
+    err(e) -> println("error:", e),
+}
+```
+
+Builtins that can fail because of the outside world (a missing file, broken JSON, a command exiting non-zero) have a `try_` twin that returns `ok(value)` or `err(message)` instead of stopping the program. Passing the wrong kind of argument is still a runtime error, since that's a bug in the program rather than something to handle.
+
+```unda
+import "json" as json
+
+fn load_config(path: string) -> result {
+    let text = try_read_file(path)?
+    json.try_parse(text)
+}
+```
+
+`?` applies to the expression right before it, so `f(x)? + 1` unwraps `f(x)` but `x |> f?` unwraps `f`; write `(x |> f)?` to unwrap a pipeline. Using `?` outside a function, where there is nothing to return to, makes an `err` a runtime error (`unhandled err(...)`). A function with a return type other than `result` or `any` can't use `?`, and `unda check` says so.
+
 ## Loops
 
 `while` repeats while its condition is truthy. `for` iterates arrays (elements), maps (keys in sorted order) and strings (characters); with two names it also binds the index or key. `break` and `continue` work in both. Each iteration gets fresh bindings, so closures created in a loop capture that iteration's values.
@@ -153,18 +223,20 @@ Global builtins:
 - `print(...)`, `println(...)`
 - `len(value)` for strings (characters), arrays, and maps
 - `type(value)`
+- `ok(value)`, `err(reason)`
 - `read_file(path)`, `write_file(path, content)`, `append_file(path, content)`
+- `try_read_file`, `try_write_file`, `try_append_file`: same arguments, return a result
 
 Standard modules:
 
 - `strings`: `split`, `join`, `upper`, `lower`, `trim`, `replace`, `contains`, `has_prefix`, `has_suffix`
 - `arrays`: `append`, `first`, `last`, `map`, `filter`, `reduce`, `range`, `reverse`, `slice`, `join`
 - `maps`: `get`, `has`, `set`, `merge`, `keys`, `values`
-- `json`: `parse`, `stringify`
+- `json`: `parse`, `try_parse`, `stringify`
 - `math`: `abs`, `ceil`, `floor`, `max`, `min`, `pow`, `round`, `sqrt`
 - `time`: `now`, `unix`, `format`
-- `process`: `args`, `env`, `run`
-- `shell`: `run`
+- `process`: `args`, `env`, `run`, `try_run`
+- `shell`: `run`, `try_run`
 
 ## Examples
 
@@ -172,3 +244,5 @@ Standard modules:
 - `examples/mutability.unda`: mutable and immutable bindings
 - `examples/phase1_data_pipeline.unda`: arrays, maps, match, pipeline, JSON
 - `examples/phase1_import_fileio.unda`: local module import and file I/O
+- `examples/phase3_types.unda`: type annotations
+- `examples/phase3_results.unda`: `ok`/`err` results and `?`

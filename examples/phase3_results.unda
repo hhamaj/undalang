@@ -1,0 +1,29 @@
+// errors you expect are values: ok(v) or err(e). `?` unwraps an ok and sends
+// an err straight back to whoever called the function
+
+import "strings" as strings
+
+fn parse_port(s: string) -> result {
+    match s {
+        "" -> err("empty port"),
+        "80" -> ok(80),
+        "8080" -> ok(8080),
+        _ -> err("not a port: " + s),
+    }
+}
+
+fn parse_addr(addr: string) -> result {
+    let parts = strings.split(addr, ":")
+    if len(parts) != 2 {
+        return err("expected host:port, got " + addr)
+    }
+    let port = parse_port(parts[1])?
+    ok({"host": parts[0], "port": port})
+}
+
+for addr in ["localhost:8080", "example.org:", "nope"] {
+    match parse_addr(addr) {
+        ok(a) -> println(a.host, "on port", a.port),
+        err(e) -> println("error:", e),
+    }
+}

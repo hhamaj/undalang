@@ -89,6 +89,9 @@ func (l *Lexer) NextToken() token.Token {
 	case ',':
 		tok = l.newToken(token.Comma, l.ch)
 		l.readChar()
+	case '?':
+		tok = l.newToken(token.Question, l.ch)
+		l.readChar()
 	case ';':
 		tok = l.newToken(token.Semicolon, l.ch)
 		l.readChar()

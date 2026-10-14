@@ -44,6 +44,7 @@ func (p *Program) String() string {
 type LetStatement struct {
 	Token   token.Token
 	Name    *Identifier
+	Type    *TypeAnnotation
 	Value   Expression
 	Mutable bool
 }
@@ -57,6 +58,9 @@ func (ls *LetStatement) String() string {
 		out.WriteString("mut ")
 	}
 	out.WriteString(ls.Name.String())
+	if ls.Type != nil {
+		out.WriteString(": " + ls.Type.String())
+	}
 	out.WriteString(" = ")
 	if ls.Value != nil {
 		out.WriteString(ls.Value.String())
@@ -328,8 +332,66 @@ func (ie *IfExpression) String() string {
 type FunctionLiteral struct {
 	Token      token.Token
 	Parameters []*Identifier
+	// ParamTypes lines up with Parameters, nil where a parameter has no type
+	ParamTypes []*TypeAnnotation
+	ReturnType *TypeAnnotation
 	Body       *BlockStatement
 	Name       string
+}
+
+// TypeAnnotation is a type written after a name (`x: int`) or after a
+// parameter list (`-> int`)
+type TypeAnnotation struct {
+	Token token.Token
+	Name  string
+}
+
+func (ta *TypeAnnotation) TokenLiteral() string { return ta.Token.Literal }
+func (ta *TypeAnnotation) String() string       { return ta.Name }
+
+// TypeNames maps every type you can write to the runtime type names it
+// accepts. the checker and both backends build their own tables from this
+var TypeNames = map[string][]string{
+	"int":    {"INTEGER"},
+	"float":  {"FLOAT"},
+	"number": {"INTEGER", "FLOAT"},
+	"string": {"STRING"},
+	"bool":   {"BOOLEAN"},
+	"nil":    {"NIL"},
+	"array":  {"ARRAY"},
+	"map":    {"MAP"},
+	"fn":     {"FUNCTION", "BUILTIN"},
+	"module": {"MODULE"},
+	"result": {"RESULT"},
+	"any":    {"INTEGER", "FLOAT", "STRING", "BOOLEAN", "NIL", "ARRAY", "MAP", "FUNCTION", "BUILTIN", "MODULE", "RESULT"},
+}
+
+// Accepts reports whether a value with the given runtime type name fits
+func (ta *TypeAnnotation) Accepts(runtimeType string) bool {
+	for _, name := range TypeNames[ta.Name] {
+		if name == runtimeType {
+			return true
+		}
+	}
+	return false
+}
+
+// Signature renders a parameter list with its types and the return type,
+// like `(a: int, b) -> int`
+func Signature(params []*Identifier, types []*TypeAnnotation, ret *TypeAnnotation) string {
+	parts := make([]string, 0, len(params))
+	for i, p := range params {
+		part := p.String()
+		if i < len(types) && types[i] != nil {
+			part += ": " + types[i].String()
+		}
+		parts = append(parts, part)
+	}
+	out := "(" + strings.Join(parts, ", ") + ")"
+	if ret != nil {
+		out += " -> " + ret.String()
+	}
+	return out
 }
 
 type ArrayLiteral struct {
@@ -516,20 +578,37 @@ func (fl *FunctionLiteral) expressionNode()      {}
 func (fl *FunctionLiteral) TokenLiteral() string { return fl.Token.Literal }
 func (fl *FunctionLiteral) String() string {
 	var out bytes.Buffer
-	params := []string{}
-	for _, p := range fl.Parameters {
-		params = append(params, p.String())
-	}
 	out.WriteString(fl.TokenLiteral())
 	if fl.Name != "" {
 		out.WriteString(" " + fl.Name)
 	}
-	out.WriteString("(")
-	out.WriteString(strings.Join(params, ", "))
-	out.WriteString(") ")
+	out.WriteString(Signature(fl.Parameters, fl.ParamTypes, fl.ReturnType))
+	out.WriteString(" ")
 	out.WriteString(fl.Body.String())
 	return out.String()
 }
+
+// TryExpression is `value?`. an ok result gives back what it wraps, an err
+// result returns from the enclosing function right away
+type TryExpression struct {
+	Token token.Token
+	Value Expression
+}
+
+func (te *TryExpression) expressionNode()      {}
+func (te *TryExpression) TokenLiteral() string { return te.Token.Literal }
+func (te *TryExpression) String() string       { return "(" + te.Value.String() + "?)" }
+
+// ResultPattern matches `ok(p)` or `err(p)` and runs p on the wrapped value
+type ResultPattern struct {
+	Token token.Token
+	Ok    bool
+	Inner Pattern
+}
+
+func (rp *ResultPattern) patternNode()         {}
+func (rp *ResultPattern) TokenLiteral() string { return rp.Token.Literal }
+func (rp *ResultPattern) String() string       { return rp.Token.Literal + "(" + rp.Inner.String() + ")" }
 
 type CallExpression struct {
 	Token     token.Token
@@ -618,6 +697,12 @@ func Position(node Node) (line, column int) {
 	case *MemberExpression:
 		tok = n.Token
 	case *MatchExpression:
+		tok = n.Token
+	case *TryExpression:
+		tok = n.Token
+	case *ResultPattern:
+		tok = n.Token
+	case *TypeAnnotation:
 		tok = n.Token
 	case *WildcardPattern:
 		tok = n.Token

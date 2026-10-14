@@ -44,6 +44,9 @@ type Context struct {
 	modules  map[string]*object.Module
 	builtins map[string]*object.Builtin
 	depth    int
+	// fn is the function whose body is running, return statements check
+	// against its return type. nil at the top level of a module
+	fn *object.Function
 }
 
 func NewContext(baseDir string, out io.Writer) *Context {
@@ -89,13 +92,20 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 	case *ast.ContinueStatement:
 		return continueSignal
 	case *ast.BlockStatement:
+		if !declares(node) {
+			// nothing to scope, so skip making an environment nobody uses
+			return evalBlockStatement(node, env, ctx)
+		}
 		return evalBlockStatement(node, object.NewEnclosedEnvironment(env), ctx)
 	case *ast.LetStatement:
 		val := EvalWithContext(node.Value, env, ctx)
 		if isAbrupt(val) {
 			return val
 		}
-		env.Define(node.Name.Value, val, node.Mutable)
+		if node.Type != nil && !node.Type.Accepts(string(val.Type())) {
+			return object.TypeMismatch(node.Name.Value+" expects", node.Type, val)
+		}
+		env.DefineTyped(node.Name.Value, val, node.Mutable, node.Type)
 		return val
 	case *ast.AssignStatement:
 		val := EvalWithContext(node.Value, env, ctx)
@@ -107,6 +117,9 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		val := EvalWithContext(node.ReturnValue, env, ctx)
 		if isAbrupt(val) {
 			return val
+		}
+		if fn := ctx.fn; fn != nil && fn.ReturnType != nil && !fn.ReturnType.Accepts(string(val.Type())) {
+			return object.TypeMismatch(fn.ReturnLabel(), fn.ReturnType, val)
 		}
 		return &object.ReturnValue{Value: val}
 	case *ast.ImportStatement:
@@ -123,7 +136,7 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		env.Define(alias, module, false)
 		return module
 	case *ast.IntegerLiteral:
-		return &object.Integer{Value: node.Value}
+		return object.NewInt(node.Value)
 	case *ast.FloatLiteral:
 		return &object.Float{Value: node.Value}
 	case *ast.StringLiteral:
@@ -165,7 +178,10 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 	case *ast.Identifier:
 		return evalIdentifier(node, env, ctx)
 	case *ast.FunctionLiteral:
-		return &object.Function{Parameters: node.Parameters, Body: node.Body, Env: env, Name: node.Name, File: ctx.File, BaseDir: ctx.BaseDir}
+		return &object.Function{
+			Parameters: node.Parameters, ParamTypes: node.ParamTypes, ReturnType: node.ReturnType,
+			Body: node.Body, Env: env, Name: node.Name, File: ctx.File, BaseDir: ctx.BaseDir,
+		}
 	case *ast.ArrayLiteral:
 		elements := evalExpressions(node.Elements, env, ctx)
 		if len(elements) == 1 && isAbrupt(elements[0]) {
@@ -192,6 +208,12 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		return evalMemberExpression(obj, node.Property.Value)
 	case *ast.MatchExpression:
 		return evalMatchExpression(node, env, ctx)
+	case *ast.TryExpression:
+		val := EvalWithContext(node.Value, env, ctx)
+		if isAbrupt(val) {
+			return val
+		}
+		return evalTry(val, ctx)
 	case *ast.CallExpression:
 		fn := EvalWithContext(node.Function, env, ctx)
 		if isAbrupt(fn) {
@@ -223,6 +245,17 @@ func evalProgram(program *ast.Program, env *object.Environment, ctx *Context) ob
 	}
 
 	return result
+}
+
+// declares reports whether a block defines names of its own
+func declares(block *ast.BlockStatement) bool {
+	for _, s := range block.Statements {
+		switch s.(type) {
+		case *ast.LetStatement, *ast.ImportStatement:
+			return true
+		}
+	}
+	return false
 }
 
 func evalBlockStatement(block *ast.BlockStatement, env *object.Environment, ctx *Context) object.Object {
@@ -301,7 +334,7 @@ func IterationItems(iterable object.Object, vars int) (first, second []object.Ob
 			return it.Elements, nil, nil
 		}
 		for i, el := range it.Elements {
-			first = append(first, &object.Integer{Value: int64(i)})
+			first = append(first, object.NewInt(int64(i)))
 			second = append(second, el)
 		}
 	case *object.Map:
@@ -324,7 +357,7 @@ func IterationItems(iterable object.Object, vars int) (first, second []object.Ob
 			if vars == 1 {
 				first = append(first, char)
 			} else {
-				first = append(first, &object.Integer{Value: int64(i)})
+				first = append(first, object.NewInt(int64(i)))
 				second = append(second, char)
 			}
 			i++
@@ -353,7 +386,7 @@ func evalBangOperatorExpression(right object.Object) object.Object {
 func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 	switch right := right.(type) {
 	case *object.Integer:
-		return &object.Integer{Value: -right.Value}
+		return object.NewInt(-right.Value)
 	case *object.Float:
 		return &object.Float{Value: -right.Value}
 	default:
@@ -362,6 +395,11 @@ func evalMinusPrefixOperatorExpression(right object.Object) object.Object {
 }
 
 func evalInfixExpression(operator string, left, right object.Object) object.Object {
+	if _, ok := left.(*object.Integer); ok {
+		if _, ok := right.(*object.Integer); ok {
+			return evalNumberInfixExpression(operator, left, right)
+		}
+	}
 	switch {
 	case isNumber(left) && isNumber(right):
 		return evalNumberInfixExpression(operator, left, right)
@@ -385,21 +423,21 @@ func evalNumberInfixExpression(operator string, left, right object.Object) objec
 		if ri, ok := right.(*object.Integer); ok {
 			switch operator {
 			case "+":
-				return &object.Integer{Value: li.Value + ri.Value}
+				return object.NewInt(li.Value + ri.Value)
 			case "-":
-				return &object.Integer{Value: li.Value - ri.Value}
+				return object.NewInt(li.Value - ri.Value)
 			case "*":
-				return &object.Integer{Value: li.Value * ri.Value}
+				return object.NewInt(li.Value * ri.Value)
 			case "/":
 				if ri.Value == 0 {
 					return newError("division by zero")
 				}
-				return &object.Integer{Value: li.Value / ri.Value}
+				return object.NewInt(li.Value / ri.Value)
 			case "%":
 				if ri.Value == 0 {
 					return newError("modulo by zero")
 				}
-				return &object.Integer{Value: li.Value % ri.Value}
+				return object.NewInt(li.Value % ri.Value)
 			case "<":
 				return nativeBool(li.Value < ri.Value)
 			case ">":
@@ -636,6 +674,12 @@ func matchPattern(pattern ast.Pattern, value object.Object, env *object.Environm
 			env.Define(p.Rest.Value, &object.Array{Elements: rest}, false)
 		}
 		return true, nil
+	case *ast.ResultPattern:
+		r, ok := value.(*object.Result)
+		if !ok || r.Ok != p.Ok {
+			return false, nil
+		}
+		return matchPattern(p.Inner, r.Value, env, ctx)
 	case *ast.MapPattern:
 		m, ok := value.(*object.Map)
 		if !ok {
@@ -663,6 +707,27 @@ func matchPattern(pattern ast.Pattern, value object.Object, env *object.Environm
 		return true, nil
 	}
 	return false, newError("unsupported pattern %T", pattern)
+}
+
+// evalTry unwraps an ok result. an err result turns into a return from the
+// running function, and there's nothing to return from at the top level so
+// that's a runtime error
+func evalTry(val object.Object, ctx *Context) object.Object {
+	r, ok := val.(*object.Result)
+	if !ok {
+		return newError("? expects RESULT, got %s", val.Type())
+	}
+	if r.Ok {
+		return r.Value
+	}
+	fn := ctx.fn
+	if fn == nil {
+		return newError("unhandled %s", r.Inspect())
+	}
+	if fn.ReturnType != nil && !fn.ReturnType.Accepts(object.ResultObj) {
+		return object.TypeMismatch(fn.ReturnLabel(), fn.ReturnType, r)
+	}
+	return &object.ReturnValue{Value: r}
 }
 
 func evalPipelineExpression(left object.Object, right ast.Expression, env *object.Environment, ctx *Context) object.Object {
@@ -724,11 +789,11 @@ func evalImportStatement(node *ast.ImportStatement, ctx *Context) object.Object 
 	}
 
 	ctx.loading[cleanPath] = true
-	previousBase, previousFile := ctx.BaseDir, ctx.File
-	ctx.BaseDir, ctx.File = filepath.Dir(cleanPath), diag.DisplayPath(cleanPath)
+	previousBase, previousFile, previousFn := ctx.BaseDir, ctx.File, ctx.fn
+	ctx.BaseDir, ctx.File, ctx.fn = filepath.Dir(cleanPath), diag.DisplayPath(cleanPath), nil
 	moduleEnv := object.NewEnvironment()
 	result := EvalWithContext(program, moduleEnv, ctx)
-	ctx.BaseDir, ctx.File = previousBase, previousFile
+	ctx.BaseDir, ctx.File, ctx.fn = previousBase, previousFile, previousFn
 	delete(ctx.loading, cleanPath)
 	if isAbrupt(result) {
 		return result
@@ -766,18 +831,26 @@ func applyFunctionWithContext(fn object.Object, args []object.Object, ctx *Conte
 		if ctx.depth >= MaxCallDepth {
 			return newError("maximum call depth exceeded")
 		}
-		extendedEnv := object.NewEnclosedEnvironment(fn.Env)
+		extendedEnv := object.NewFunctionEnvironment(fn.Env, len(fn.Parameters))
 		for paramIdx, param := range fn.Parameters {
+			if typ := paramType(fn, paramIdx); typ != nil && !typ.Accepts(string(args[paramIdx].Type())) {
+				return object.TypeMismatch("parameter "+param.Value+" expects", typ, args[paramIdx])
+			}
 			extendedEnv.Define(param.Value, args[paramIdx], false)
 		}
-		previousBase, previousFile := ctx.BaseDir, ctx.File
+		previousBase, previousFile, previousFn := ctx.BaseDir, ctx.File, ctx.fn
 		if fn.File != "" || fn.BaseDir != "" {
 			ctx.BaseDir, ctx.File = fn.BaseDir, fn.File
 		}
+		ctx.fn = fn
 		ctx.depth++
-		evaluated := EvalWithContext(fn.Body, extendedEnv, ctx)
+		// the body runs straight in the parameter scope. a separate one would
+		// only matter for a `let` shadowing a parameter, and redefining the
+		// name in place looks the same from inside the body
+		evaluated := evalBlockStatement(fn.Body, extendedEnv, ctx)
 		ctx.depth--
-		ctx.BaseDir, ctx.File = previousBase, previousFile
+		evaluated = checkImplicitReturn(fn, evaluated, ctx.File)
+		ctx.BaseDir, ctx.File, ctx.fn = previousBase, previousFile, previousFn
 		switch result := evaluated.(type) {
 		case *object.ReturnValue:
 			return result.Value
@@ -790,6 +863,30 @@ func applyFunctionWithContext(fn object.Object, args []object.Object, ctx *Conte
 	default:
 		return newError("not a function: %s", fn.Type())
 	}
+}
+
+func paramType(fn *object.Function, i int) *ast.TypeAnnotation {
+	if i < len(fn.ParamTypes) {
+		return fn.ParamTypes[i]
+	}
+	return nil
+}
+
+// checkImplicitReturn checks the value a function body falls off the end
+// with. the error points at the body's last statement since that's where the
+// value came from
+func checkImplicitReturn(fn *object.Function, result object.Object, file string) object.Object {
+	if fn.ReturnType == nil || isAbrupt(result) || fn.ReturnType.Accepts(string(result.Type())) {
+		return result
+	}
+	err := object.TypeMismatch(fn.ReturnLabel(), fn.ReturnType, result)
+	var at ast.Node = fn.Body
+	if n := len(fn.Body.Statements); n > 0 {
+		at = fn.Body.Statements[n-1]
+	}
+	err.File = file
+	err.Line, err.Column = ast.Position(at)
+	return err
 }
 
 func nativeBool(input bool) *object.Boolean {
@@ -855,6 +952,9 @@ func objectsEqual(left, right object.Object) bool {
 			}
 		}
 		return true
+	case *object.Result:
+		right, ok := right.(*object.Result)
+		return ok && left.Ok == right.Ok && objectsEqual(left.Value, right.Value)
 	case *object.Map:
 		right, ok := right.(*object.Map)
 		if !ok || len(left.Pairs) != len(right.Pairs) {

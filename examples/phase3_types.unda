@@ -1,0 +1,23 @@
+// type annotations are optional, untyped code keeps working as before
+
+fn add(a: int, b: int) -> int {
+    return a + b
+}
+
+fn average(xs: array) -> float {
+    let mut total: number = 0
+    for x in xs {
+        total = total + x
+    }
+    total * 1.0 / len(xs)
+}
+
+let mut count: int = 0
+for n in [3, 4, 5] {
+    count = add(count, n)
+}
+
+let label = fn(name: string, value) -> string { name + ": " + type(value) }
+
+println(count, average([1, 2, 3, 4]))
+println(label("count", count))
