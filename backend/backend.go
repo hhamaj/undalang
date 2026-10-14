@@ -72,8 +72,10 @@ func (interp) Run(path string, _ io.Reader, stdout, stderr io.Writer) int {
 
 type bytecode struct{}
 
-func (bytecode) Name() string     { return "vm" }
-func (bytecode) Describe() string { return "bytecode VM, checks the program, then runs it fast without a C compiler" }
+func (bytecode) Name() string { return "vm" }
+func (bytecode) Describe() string {
+	return "bytecode VM, checks the program, then runs it fast without a C compiler"
+}
 func (bytecode) Run(path string, _ io.Reader, stdout, stderr io.Writer) int {
 	prog := semantic.AnalyzeFile(path, semantic.Options{})
 	if prog.HasErrors() {
