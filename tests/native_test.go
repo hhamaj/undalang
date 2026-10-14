@@ -412,6 +412,39 @@ println(nested, anything)
 	"err_elem_struct":    "struct P { a }\nstruct Q { a }\nfn f(v) { let ps: array[P] = v\nps }\nf([P(1), Q(2)])",
 	"err_elem_field":     "struct Bag { items: array[string] }\nfn mk(v) { Bag(v) }\nprintln(mk([]))\nmk([1])",
 	"err_elem_assign":    "let mut xs: array[int] = []\nfn set(v) { xs = v }\nset([1])\nprintln(xs)\nset([\"no\"])",
+	"mem": `import "mem" as mem
+let b = mem.alloc(32)
+println(b, type(b), mem.size(b), b == b, mem.get_i64(b, 0))
+mem.set_i8(b, 0, -1)
+mem.set_u8(b, 1, 255)
+mem.set_i16(b, 2, -300)
+mem.set_u16(b, 4, 65535)
+mem.set_i32(b, 6, -2147483648)
+mem.set_u32(b, 10, 4294967295)
+mem.set_i64(b, 14, -9223372036854775807 - 1)
+mem.set_f32(b, 22, 1.5)
+println(mem.get_i8(b, 0), mem.get_u8(b, 0), mem.get_u8(b, 1), mem.get_i16(b, 2), mem.get_u16(b, 4))
+println(mem.get_i32(b, 6), mem.get_u32(b, 10), mem.get_i64(b, 14), mem.get_f32(b, 22), mem.get_u16(b, 0))
+mem.set_f64(b, 24, 0.1)
+println(mem.get_f64(b, 24), mem.get_f32(b, 24))
+mem.set_cstring(b, 0, "unda")
+println(mem.get_cstring(b, 0), mem.get_cstring(b, 2), mem.get_u8(b, 4))
+let empty = mem.alloc(0)
+println(mem.size(empty), empty)
+mem.free(b)
+println(b)
+`,
+	"err_mem_bounds":     "import \"mem\" as mem\nlet b = mem.alloc(8)\nprintln(mem.get_i64(b, 0))\nmem.get_i32(b, 5)",
+	"err_mem_negative":   "import \"mem\" as mem\nfn a(n) { mem.alloc(n) }\na(-1)",
+	"err_mem_freed":      "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.free(b)\nmem.set_i8(b, 0, 1)",
+	"err_mem_double":     "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.free(b)\nmem.free(b)",
+	"err_mem_range":      "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.set_u8(b, 0, 255)\nmem.set_i8(b, 0, 128)",
+	"err_mem_u64":        "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.set_i64(b, 0, -1)\nmem.get_u64(b, 0)",
+	"err_mem_nul":        "import \"mem\" as mem\nlet b = mem.alloc(4)\nmem.set_u32(b, 0, 4294967295)\nmem.get_cstring(b, 1)",
+	"err_mem_cstr_room":  "import \"mem\" as mem\nlet b = mem.alloc(4)\nmem.set_cstring(b, 0, \"abc\")\nmem.set_cstring(b, 1, \"abc\")",
+	"err_mem_value":      "import \"mem\" as mem\nfn s(v) { mem.set_f64(mem.alloc(8), 0, v) }\ns(\"x\")",
+	"err_mem_offset":     "import \"mem\" as mem\nfn g(o) { mem.get_u8(mem.alloc(1), o) }\ng(nil)",
+	"err_mem_arity":      "import \"mem\" as mem\nfn g(f) { f(mem.alloc(1)) }\ng(mem.get_u8)",
 	"err_unhandled":      "fn f() { err(\"boom\") }\nprintln(\"before\")\nlet v = f()?",
 	"err_try_type":       "fn f(v) { v? }\nf(5)",
 	"err_json_result":    "import \"json\" as json\njson.stringify([ok(1)])",

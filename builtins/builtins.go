@@ -129,6 +129,7 @@ func StdModules(apply Applier) map[string]*object.Module {
 			"run":     plain("shell.run", shellRun),
 			"try_run": attempt("shell.try_run", shellRun),
 		}},
+		"mem": {Name: "mem", Members: memModule()},
 	}
 }
 

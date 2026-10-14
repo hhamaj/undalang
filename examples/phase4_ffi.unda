@@ -2,6 +2,8 @@
 // types, after that they're called like any builtin. needs the native
 // backend: unda run --native examples/phase4_ffi.unda
 
+import "mem" as mem
+
 extern "m" {
     fn sqrt(x: f64) -> f64
     fn pow(base: f64, exp: f64) -> f64
@@ -14,6 +16,7 @@ extern "c" {
     fn fopen(path: cstring, mode: cstring) -> ptr
     fn fputs(s: cstring, f: ptr) -> i32
     fn fclose(f: ptr) -> i32
+    fn gettimeofday(tv: ptr, tz: ptr) -> i32
 }
 
 struct Point { x: number, y: number }
@@ -36,3 +39,9 @@ if f == nil {
     fclose(f)
     println(read_file(path))
 }
+
+// C fills a buffer we hand it, the buffer knows its size and checks reads
+let tv = mem.alloc(16)
+gettimeofday(tv, nil)
+println("seconds since 1970 look sane:", mem.get_i64(tv, 0) > 1700000000)
+mem.free(tv)

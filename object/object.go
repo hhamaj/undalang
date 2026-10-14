@@ -381,3 +381,20 @@ func keyText(k Object) string {
 	}
 	return k.Inspect()
 }
+
+const BufferObj = "BUFFER"
+
+// Buffer is memory from mem.alloc. it's the one value that changes in place:
+// it stands for memory C reads and writes, so copying it would defeat it
+type Buffer struct {
+	Data  []byte
+	Freed bool
+}
+
+func (b *Buffer) Type() Type { return BufferObj }
+func (b *Buffer) Inspect() string {
+	if b.Freed {
+		return "buffer(freed)"
+	}
+	return fmt.Sprintf("buffer(%d bytes)", len(b.Data))
+}

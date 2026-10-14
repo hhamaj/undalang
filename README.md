@@ -111,7 +111,7 @@ fn add(a: int, b: int) -> int {
 let label = fn(name: string, value) -> string { name + ": " + type(value) }
 ```
 
-The types are `int`, `float`, `number` (int or float), `string`, `bool`, `nil`, `array`, `map`, `fn` (functions and builtins), `module`, `result`, `ptr`, `any` and the name of any struct.
+The types are `int`, `float`, `number` (int or float), `string`, `bool`, `nil`, `array`, `map`, `fn` (functions and builtins), `module`, `result`, `ptr`, `buffer`, `any` and the name of any struct.
 
 Arrays and maps can say what they hold: `array[int]`, `map[string, int]`, `array[Point]`, `map[string, array[float]]`. Map keys can be `int`, `string`, `bool`, `nil` or `any`. Checking one of these at runtime looks at every element, so it costs time proportional to the collection; a mismatch names the first offender:
 
@@ -245,6 +245,25 @@ Only structs declared this way can cross into C; `cstring` and `ptr` fields may 
 
 The library is `"c"` for libc, a name like `"m"` or `"sqlite3"` to link `-lm` / `-lsqlite3`, or a path to a `.so` or `.a` file (relative to the source file). Shared libraries given by path are found again at runtime through an rpath.
 
+### Buffers
+
+Some C functions want memory to fill in, like `gettimeofday` filling a `struct timeval`. The `mem` module hands out buffers of C memory for that. A buffer passes wherever an extern function takes a `ptr`, and its bytes are read and written at byte offsets:
+
+```unda
+import "mem" as mem
+
+extern "c" { fn gettimeofday(tv: ptr, tz: ptr) -> i32 }
+
+let tv = mem.alloc(16)               // zeroed, freed only by mem.free
+gettimeofday(tv, nil)
+println(mem.get_i64(tv, 0))          // seconds
+mem.free(tv)
+```
+
+There are `get_` and `set_` functions for `i8` through `u64`, `f32`, `f64` and `cstring`, plus `alloc`, `free` and `size`. Every access is bounds checked, values have to fit the type (`set_i8` of 300 is an error) and using a buffer after `mem.free` is a runtime error, in Unda code and when handing it to C. Numbers use the machine's byte order. What C does with the pointer is up to C.
+
+Buffers are the one thing in Unda that changes in place: two names for the same buffer see the same bytes. That's the point of them, they stand for memory that C shares. The `mem` module works in both backends; only passing buffers to C needs the native one.
+
 Extern functions only work in the native backend (`unda build`, `unda run --native`); the interpreter stops at the `extern` block with an error. Declaring a function with the wrong C signature is undefined behavior, same as in C.
 
 ## Loops
@@ -318,6 +337,7 @@ Standard modules:
 - `math`: `abs`, `ceil`, `floor`, `max`, `min`, `pow`, `round`, `sqrt`
 - `time`: `now`, `unix`, `format`
 - `process`: `args`, `env`, `run`, `try_run`
+- `mem`: `alloc`, `free`, `size`, `get_`/`set_` for `i8`…`u64`, `f32`, `f64`, `cstring`
 - `shell`: `run`, `try_run`
 
 ## Examples

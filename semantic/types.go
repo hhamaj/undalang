@@ -29,12 +29,13 @@ const (
 	KStruct
 	KStructDef
 	KPointer
+	KBuffer
 
 	KNever   Kind = 0
 	KNumber       = KInt | KFloat
 	KCall         = KFunction | KBuiltin
 	KHash         = KInt | KString | KBool | KNil
-	KUnknown      = KInt | KFloat | KString | KBool | KNil | KArray | KMap | KFunction | KBuiltin | KModule | KResult | KStruct | KStructDef | KPointer
+	KUnknown      = KInt | KFloat | KString | KBool | KNil | KArray | KMap | KFunction | KBuiltin | KModule | KResult | KStruct | KStructDef | KPointer | KBuffer
 )
 
 var kindNames = []struct {
@@ -44,7 +45,7 @@ var kindNames = []struct {
 	{KInt, "INTEGER"}, {KFloat, "FLOAT"}, {KString, "STRING"}, {KBool, "BOOLEAN"},
 	{KNil, "NIL"}, {KArray, "ARRAY"}, {KMap, "MAP"}, {KFunction, "FUNCTION"},
 	{KBuiltin, "BUILTIN"}, {KModule, "MODULE"}, {KResult, "RESULT"},
-	{KStruct, "STRUCT VALUE"}, {KStructDef, "STRUCT"}, {KPointer, "POINTER"},
+	{KStruct, "STRUCT VALUE"}, {KStructDef, "STRUCT"}, {KPointer, "POINTER"}, {KBuffer, "BUFFER"},
 }
 
 // Known reports a single statically known kind. struct values don't count:
@@ -309,6 +310,26 @@ var StdModules = map[string]map[string]*Signature{
 		"run":     sig("shell.run", 1, 1, KString, KString),
 		"try_run": sig("shell.try_run", 1, 1, KResult, KString),
 	},
+	"mem": memSignatures(),
+}
+
+func memSignatures() map[string]*Signature {
+	out := map[string]*Signature{
+		"alloc":       sig("mem.alloc", 1, 1, KBuffer, KInt),
+		"free":        sig("mem.free", 1, 1, KNil, KBuffer),
+		"size":        sig("mem.size", 1, 1, KInt, KBuffer),
+		"get_cstring": sig("mem.get_cstring", 2, 2, KString, KBuffer, KInt),
+		"set_cstring": sig("mem.set_cstring", 3, 3, KNil, KBuffer, KInt, KString),
+	}
+	for _, t := range []string{"i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64"} {
+		value, result := KInt, KInt
+		if t[0] == 'f' {
+			value, result = KNumber, KFloat
+		}
+		out["get_"+t] = sig("mem.get_"+t, 2, 2, result, KBuffer, KInt)
+		out["set_"+t] = sig("mem.set_"+t, 3, 3, KNil, KBuffer, KInt, value)
+	}
+	return out
 }
 
 func stdModuleType(name string) *ModuleType {

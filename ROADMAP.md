@@ -204,7 +204,8 @@ Status:
 - opaque pointers: `ptr` in extern signatures and annotations for handles C gives out (`FILE *`, library objects). Unda code holds, compares and passes them back, nothing more; NULL is nil. this is the deliberately narrow pointer story: Unda values stay values, raw memory stays on the C side
 - element types: `array[int]`, `map[string, array[Point]]`, nested and with structs. checked statically from literals, indexing and for loops, and at runtime element by element, naming the first element that doesn't fit
 - C structs: `struct` inside an extern block gets a C layout and passes to and from C by value, nested structs included. the Unda side is an ordinary struct, conversions are checked field by field
-- next: a small module for C-owned buffers, low-level modules (bits, os)
+- manual memory, carefully scoped: the `mem` module's buffers are malloc'd memory with a known size, freed only by `mem.free`. typed reads and writes at byte offsets are bounds checked, use after free and double free are runtime errors, and a buffer passes to C as a `ptr`. buffers are the one mutable value in the language, on purpose
+- next: low-level modules (bits, os)
 
 Potential deliverables:
 - structs and user-defined data layouts

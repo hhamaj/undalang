@@ -25,7 +25,7 @@
 #include <time.h>
 #include <unistd.h>
 
-typedef enum { U_UNDEF = 0, U_NIL, U_BOOL, U_INT, U_FLOAT, U_STR, U_ARR, U_MAP, U_FN, U_BUILTIN, U_MOD, U_RES, U_STRUCT, U_SDEF, U_PTR } UTag;
+typedef enum { U_UNDEF = 0, U_NIL, U_BOOL, U_INT, U_FLOAT, U_STR, U_ARR, U_MAP, U_FN, U_BUILTIN, U_MOD, U_RES, U_STRUCT, U_SDEF, U_PTR, U_BUF } UTag;
 
 typedef struct UStr { size_t len; char data[]; } UStr;
 typedef struct UArr UArr;
@@ -33,12 +33,13 @@ typedef struct UMap UMap;
 typedef struct UFn UFn;
 typedef struct UMod UMod;
 typedef struct URes URes;
+typedef struct UBuf UBuf;
 typedef struct UStruct UStruct;
 typedef struct UStructDef UStructDef;
 
 typedef struct UValue {
     UTag tag;
-    union { bool b; int64_t i; double f; UStr *s; UArr *a; UMap *m; UFn *fn; UMod *mod; URes *r; UStruct *st; UStructDef *sd; void *p; } as;
+    union { bool b; int64_t i; double f; UStr *s; UArr *a; UMap *m; UFn *fn; UMod *mod; URes *r; UStruct *st; UStructDef *sd; void *p; UBuf *buf; } as;
 } UValue;
 
 /*
@@ -56,6 +57,9 @@ struct UStructDef { const char *name; int n; const char **fields; const UType *c
 struct UStruct { UStructDef *def; UValue fields[]; };
 
 struct URes { bool ok; UValue v; };
+
+/* a mem buffer. data is malloc'd and stays put, C may hold on to it */
+struct UBuf { size_t size; unsigned char *data; bool freed; };
 
 struct UArr { size_t len, cap; UValue *items; };
 typedef struct { UValue key, value; } UEntry;
@@ -380,6 +384,7 @@ static const char *u_type_name(UValue v) {
     case U_STRUCT: return v.as.st->def->name;
     case U_SDEF: return "STRUCT";
     case U_PTR: return "POINTER";
+    case U_BUF: return "BUFFER";
     default: return "UNDEFINED";
     }
 }
@@ -566,6 +571,10 @@ static void u_inspect_to(USb *sb, UValue v) {
     }
     case U_SDEF: sb_puts(sb, "struct "); sb_puts(sb, v.as.sd->name); break;
     case U_PTR: sb_printf(sb, "pointer(%p)", v.as.p); break;
+    case U_BUF:
+        if (v.as.buf->freed) sb_puts(sb, "buffer(freed)");
+        else sb_printf(sb, "buffer(%zu bytes)", v.as.buf->size);
+        break;
     default: sb_puts(sb, "<undefined>"); break;
     }
 }
@@ -692,6 +701,7 @@ static bool u_equal(UValue a, UValue b) {
         return true;
     case U_SDEF: return b.tag == U_SDEF && a.as.sd == b.as.sd;
     case U_PTR: return b.tag == U_PTR && a.as.p == b.as.p;
+    case U_BUF: return b.tag == U_BUF && a.as.buf == b.as.buf;
     default: return false;
     }
 }
@@ -1152,6 +1162,10 @@ static const char *u_ffi_cstring(UValue v, const char *what, const char *field) 
 /* pointers only come from C and only go back to C. nil stands for NULL */
 static void *u_ffi_ptr(UValue v, const char *what, const char *field) {
     if (v.tag == U_NIL) return NULL;
+    if (v.tag == U_BUF) {
+        if (v.as.buf->freed) u_panic("%s%s%s is a freed buffer", U_FFI_WHO);
+        return v.as.buf->data;
+    }
     if (v.tag != U_PTR) u_panic("%s%s%s must be POINTER, got %s", U_FFI_WHO, u_type_name(v));
     return v.as.p;
 }
@@ -2236,6 +2250,144 @@ U_BUILTIN_FN(up_try_run) { (void)env_; U_ATTEMPT(u_process_run("process.try_run"
 U_BUILTIN_FN(ush_run) { (void)env_; return u_shell_run("shell.run", argc, argv); }
 U_BUILTIN_FN(ush_try_run) { (void)env_; U_ATTEMPT(u_shell_run("shell.try_run", argc, argv)); }
 
+/*
+ * mem: buffers for C to read and write. builtins/mem.go is the interpreter's
+ * copy, the checks happen in the same order with the same words
+ */
+
+static UBuf *um_live(const char *name, UValue v) {
+    if (v.tag != U_BUF) u_panic("%s first argument must be BUFFER, got %s", name, u_type_name(v));
+    if (v.as.buf->freed) u_panic("%s on a freed buffer", name);
+    return v.as.buf;
+}
+
+static int64_t um_offset(const char *name, UValue v) {
+    if (v.tag != U_INT) u_panic("%s offset must be INTEGER, got %s", name, u_type_name(v));
+    return v.as.i;
+}
+
+static void um_in_range(const char *name, UBuf *b, int64_t off, size_t width) {
+    if (off < 0 || off > (int64_t)b->size - (int64_t)width)
+        u_panic("%s offset %lld is out of range for a %zu byte buffer", name, (long long)off, b->size);
+}
+
+U_BUILTIN_FN(um_alloc) {
+    (void)env_;
+    U_ARGC("mem.alloc", 1);
+    if (argv[0].tag != U_INT) u_panic("mem.alloc size must be INTEGER, got %s", u_type_name(argv[0]));
+    if (argv[0].as.i < 0) u_panic("mem.alloc size can't be negative, got %lld", (long long)argv[0].as.i);
+    UBuf *b = u_alloc(sizeof(UBuf));
+    b->size = (size_t)argv[0].as.i;
+    b->data = u_xalloc(b->size);
+    UValue v; v.tag = U_BUF; v.as.buf = b;
+    return v;
+}
+
+U_BUILTIN_FN(um_free) {
+    (void)env_;
+    U_ARGC("mem.free", 1);
+    UBuf *b = um_live("mem.free", argv[0]);
+    free(b->data);
+    b->data = NULL;
+    b->size = 0;
+    b->freed = true;
+    return uv_nil();
+}
+
+U_BUILTIN_FN(um_size) {
+    (void)env_;
+    U_ARGC("mem.size", 1);
+    return uv_int((int64_t)um_live("mem.size", argv[0])->size);
+}
+
+/* get_<t> and set_<t> for each C type, ints check the value fits first */
+#define UM_ACCESS(T, CT, KIND, LO, HI) \
+U_BUILTIN_FN(um_get_##T) { \
+    (void)env_; \
+    U_ARGC("mem.get_" #T, 2); \
+    UBuf *b = um_live("mem.get_" #T, argv[0]); \
+    int64_t off = um_offset("mem.get_" #T, argv[1]); \
+    um_in_range("mem.get_" #T, b, off, sizeof(CT)); \
+    CT x; \
+    memcpy(&x, b->data + off, sizeof x); \
+    return UM_OUT_##KIND("mem.get_" #T, x); \
+} \
+U_BUILTIN_FN(um_set_##T) { \
+    (void)env_; \
+    U_ARGC("mem.set_" #T, 3); \
+    UBuf *b = um_live("mem.set_" #T, argv[0]); \
+    int64_t off = um_offset("mem.set_" #T, argv[1]); \
+    um_in_range("mem.set_" #T, b, off, sizeof(CT)); \
+    CT x = (CT)UM_IN_##KIND("mem.set_" #T, #T, argv[2], LO, HI); \
+    memcpy(b->data + off, &x, sizeof x); \
+    return uv_nil(); \
+}
+
+static int64_t um_in_int(const char *name, const char *t, UValue v, int64_t lo, int64_t hi) {
+    if (v.tag != U_INT) u_panic("%s value must be INTEGER, got %s", name, u_type_name(v));
+    if (v.as.i < lo || v.as.i > hi) u_panic("%s value is out of range for %s: %lld", name, t, (long long)v.as.i);
+    return v.as.i;
+}
+static uint64_t um_in_uint(const char *name, const char *t, UValue v, int64_t lo, uint64_t hi) {
+    (void)lo;
+    if (v.tag != U_INT) u_panic("%s value must be INTEGER, got %s", name, u_type_name(v));
+    if (v.as.i < 0 || (uint64_t)v.as.i > hi) u_panic("%s value is out of range for %s: %lld", name, t, (long long)v.as.i);
+    return (uint64_t)v.as.i;
+}
+static double um_in_float(const char *name, const char *t, UValue v, int lo, int hi) {
+    (void)t; (void)lo; (void)hi;
+    if (!u_is_num(v)) u_panic("%s value must be number, got %s", name, u_type_name(v));
+    return u_num(v);
+}
+static UValue um_out_u64(const char *name, uint64_t x) {
+    if (x > INT64_MAX) u_panic("%s read %llu, too big for an int", name, (unsigned long long)x);
+    return uv_int((int64_t)x);
+}
+
+#define UM_IN_INT um_in_int
+#define UM_IN_UINT um_in_uint
+#define UM_IN_FLOAT um_in_float
+#define UM_IN_U64 um_in_uint
+#define UM_OUT_INT(name, x) uv_int((int64_t)(x))
+#define UM_OUT_UINT(name, x) uv_int((int64_t)(x))
+#define UM_OUT_FLOAT(name, x) uv_float((double)(x))
+#define UM_OUT_U64(name, x) um_out_u64(name, x)
+
+UM_ACCESS(i8, int8_t, INT, INT8_MIN, INT8_MAX)
+UM_ACCESS(i16, int16_t, INT, INT16_MIN, INT16_MAX)
+UM_ACCESS(i32, int32_t, INT, INT32_MIN, INT32_MAX)
+UM_ACCESS(i64, int64_t, INT, INT64_MIN, INT64_MAX)
+UM_ACCESS(u8, uint8_t, UINT, 0, UINT8_MAX)
+UM_ACCESS(u16, uint16_t, UINT, 0, UINT16_MAX)
+UM_ACCESS(u32, uint32_t, UINT, 0, UINT32_MAX)
+UM_ACCESS(u64, uint64_t, U64, 0, UINT64_MAX)
+UM_ACCESS(f32, float, FLOAT, 0, 0)
+UM_ACCESS(f64, double, FLOAT, 0, 0)
+
+U_BUILTIN_FN(um_get_cstring) {
+    (void)env_;
+    U_ARGC("mem.get_cstring", 2);
+    UBuf *b = um_live("mem.get_cstring", argv[0]);
+    int64_t off = um_offset("mem.get_cstring", argv[1]);
+    um_in_range("mem.get_cstring", b, off, 0);
+    unsigned char *nul = memchr(b->data + off, 0, b->size - (size_t)off);
+    if (!nul) u_panic("mem.get_cstring found no NUL byte after offset %lld", (long long)off);
+    return uv_str_n((const char *)b->data + off, (size_t)(nul - (b->data + off)));
+}
+
+U_BUILTIN_FN(um_set_cstring) {
+    (void)env_;
+    U_ARGC("mem.set_cstring", 3);
+    UBuf *b = um_live("mem.set_cstring", argv[0]);
+    int64_t off = um_offset("mem.set_cstring", argv[1]);
+    if (argv[2].tag != U_STR) u_panic("mem.set_cstring value must be STRING, got %s", u_type_name(argv[2]));
+    UStr *s = argv[2].as.s;
+    if (memchr(s->data, 0, s->len)) u_panic("mem.set_cstring value contains a NUL byte");
+    um_in_range("mem.set_cstring", b, off, s->len + 1);
+    memcpy(b->data + off, s->data, s->len + 1);
+    return uv_nil();
+}
+
 /* module tables */
 
 typedef struct { const char *name; UCode code; const char *qualified; } UBuiltinDef;
@@ -2267,6 +2419,20 @@ static const UBuiltinDef u_time_defs[] = {
 static const UBuiltinDef u_process_defs[] = {
     {"args", up_args, "process.args"}, {"env", up_env, "process.env"}, {"run", up_run, "process.run"},
     {"try_run", up_try_run, "process.try_run"}, {NULL, NULL, NULL}};
+static const UBuiltinDef u_mem_defs[] = {
+    {"alloc", um_alloc, "mem.alloc"}, {"free", um_free, "mem.free"}, {"size", um_size, "mem.size"},
+    {"get_cstring", um_get_cstring, "mem.get_cstring"}, {"set_cstring", um_set_cstring, "mem.set_cstring"},
+    {"get_i8", um_get_i8, "mem.get_i8"}, {"set_i8", um_set_i8, "mem.set_i8"},
+    {"get_i16", um_get_i16, "mem.get_i16"}, {"set_i16", um_set_i16, "mem.set_i16"},
+    {"get_i32", um_get_i32, "mem.get_i32"}, {"set_i32", um_set_i32, "mem.set_i32"},
+    {"get_i64", um_get_i64, "mem.get_i64"}, {"set_i64", um_set_i64, "mem.set_i64"},
+    {"get_u8", um_get_u8, "mem.get_u8"}, {"set_u8", um_set_u8, "mem.set_u8"},
+    {"get_u16", um_get_u16, "mem.get_u16"}, {"set_u16", um_set_u16, "mem.set_u16"},
+    {"get_u32", um_get_u32, "mem.get_u32"}, {"set_u32", um_set_u32, "mem.set_u32"},
+    {"get_u64", um_get_u64, "mem.get_u64"}, {"set_u64", um_set_u64, "mem.set_u64"},
+    {"get_f32", um_get_f32, "mem.get_f32"}, {"set_f32", um_set_f32, "mem.set_f32"},
+    {"get_f64", um_get_f64, "mem.get_f64"}, {"set_f64", um_set_f64, "mem.set_f64"},
+    {NULL, NULL, NULL}};
 static const UBuiltinDef u_shell_defs[] = {
     {"run", ush_run, "shell.run"}, {"try_run", ush_try_run, "shell.try_run"}, {NULL, NULL, NULL}};
 
@@ -2280,6 +2446,7 @@ static UValue u_std_module(const char *name) {
     else if (!strcmp(name, "time")) defs = u_time_defs;
     else if (!strcmp(name, "process")) defs = u_process_defs;
     else if (!strcmp(name, "shell")) defs = u_shell_defs;
+    else if (!strcmp(name, "mem")) defs = u_mem_defs;
     else u_panic("unknown standard module %s", name);
     int n = 0;
     while (defs[n].name) n++;

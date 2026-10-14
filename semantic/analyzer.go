@@ -722,8 +722,11 @@ func cTypeKind(t *ast.TypeAnnotation, result bool) Kind {
 		return KString | KNil
 	case t.Name == "cstring":
 		return KString
-	case t.Name == "ptr":
+	case t.Name == "ptr" && result:
 		return KPointer | KNil
+	case t.Name == "ptr":
+		// a mem buffer passes as the address of its bytes
+		return KPointer | KNil | KBuffer
 	case t.IsStruct():
 		return KStruct
 	}

@@ -461,7 +461,8 @@ var TypeNames = map[string][]string{
 	"module": {"MODULE"},
 	"result": {"RESULT"},
 	"ptr":    {"POINTER"},
-	"any":    {"INTEGER", "FLOAT", "STRING", "BOOLEAN", "NIL", "ARRAY", "MAP", "FUNCTION", "BUILTIN", "MODULE", "RESULT", "POINTER"},
+	"buffer": {"BUFFER"},
+	"any":    {"INTEGER", "FLOAT", "STRING", "BOOLEAN", "NIL", "ARRAY", "MAP", "FUNCTION", "BUILTIN", "MODULE", "RESULT", "POINTER", "BUFFER"},
 }
 
 // IsStruct reports whether the annotation names a struct. struct names start

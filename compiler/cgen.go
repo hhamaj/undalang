@@ -17,7 +17,7 @@ var runtimeSource string
 var tagNames = map[string]string{
 	"INTEGER": "U_INT", "FLOAT": "U_FLOAT", "STRING": "U_STR", "BOOLEAN": "U_BOOL", "NIL": "U_NIL",
 	"ARRAY": "U_ARR", "MAP": "U_MAP", "FUNCTION": "U_FN", "BUILTIN": "U_BUILTIN", "MODULE": "U_MOD",
-	"RESULT": "U_RES", "POINTER": "U_PTR",
+	"RESULT": "U_RES", "POINTER": "U_PTR", "BUFFER": "U_BUF",
 }
 
 var binops = map[string]string{
