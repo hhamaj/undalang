@@ -195,7 +195,7 @@ Success criteria:
 
 ---
 
-### Phase 4 — Systems-Level Capabilities
+### Phase 4 — Systems-Level Capabilities ✅
 Goal: progressively add low-level control for advanced users.
 
 Status:
@@ -205,7 +205,8 @@ Status:
 - element types: `array[int]`, `map[string, array[Point]]`, nested and with structs. checked statically from literals, indexing and for loops, and at runtime element by element, naming the first element that doesn't fit
 - C structs: `struct` inside an extern block gets a C layout and passes to and from C by value, nested structs included. the Unda side is an ordinary struct, conversions are checked field by field
 - manual memory, carefully scoped: the `mem` module's buffers are malloc'd memory with a known size, freed only by `mem.free`. typed reads and writes at byte offsets are bounds checked, use after free and double free are runtime errors, and a buffer passes to C as a `ptr`. buffers are the one mutable value in the language, on purpose
-- next: low-level modules (bits, os)
+- low-level modules: `bits` (and, or, xor, not, shifts, popcount on 64-bit ints) and `os` (exit codes, exists, is_dir, list_dir, mkdir, remove, cwd, getpid, with try_ variants for the ones that can fail). os.exit unwinds through the interpreter as a signal, so callbacks and the REPL see it like the native exit
+- left for later: calling C from the interpreter (needs cgo or a dlopen library), pointers inside Unda itself (deliberately not planned, see above)
 
 Potential deliverables:
 - structs and user-defined data layouts

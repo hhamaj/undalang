@@ -338,6 +338,8 @@ Standard modules:
 - `time`: `now`, `unix`, `format`
 - `process`: `args`, `env`, `run`, `try_run`
 - `mem`: `alloc`, `free`, `size`, `get_`/`set_` for `i8`…`u64`, `f32`, `f64`, `cstring`
+- `bits`: `and`, `or`, `xor`, `not`, `shl`, `shr` (keeps the sign), `ushr` (fills with zeros), `count` (set bits), all on the 64 bits of an int
+- `os`: `exit`, `exists`, `is_dir`, `list_dir`, `mkdir`, `remove`, `cwd`, `getpid`, plus `try_list_dir`, `try_mkdir` and `try_remove`
 - `shell`: `run`, `try_run`
 
 ## Examples
@@ -350,3 +352,4 @@ Standard modules:
 - `examples/phase3_results.unda`: `ok`/`err` results and `?`
 - `examples/phase4_structs.unda`: structs
 - `examples/phase4_ffi.unda`: calling C functions (native only)
+- `examples/phase4_system.unda`: `bits` and `os`

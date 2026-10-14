@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -2388,6 +2389,153 @@ U_BUILTIN_FN(um_set_cstring) {
     return uv_nil();
 }
 
+/* bits: the 64 bits of an int */
+
+static int64_t ub_int_arg(const char *name, UValue *argv, int i) {
+    if (argv[i].tag != U_INT) u_panic("%s argument %d must be INTEGER, got %s", name, i + 1, u_type_name(argv[i]));
+    return argv[i].as.i;
+}
+
+#define UB_TWO(NAME, EXPR) \
+U_BUILTIN_FN(ubits_##NAME) { \
+    (void)env_; \
+    U_ARGC("bits." #NAME, 2); \
+    int64_t a = ub_int_arg("bits." #NAME, argv, 0), b = ub_int_arg("bits." #NAME, argv, 1); \
+    return uv_int(EXPR); \
+}
+#define UB_SHIFT(NAME, EXPR) \
+U_BUILTIN_FN(ubits_##NAME) { \
+    (void)env_; \
+    U_ARGC("bits." #NAME, 2); \
+    int64_t a = ub_int_arg("bits." #NAME, argv, 0), n = ub_int_arg("bits." #NAME, argv, 1); \
+    if (n < 0 || n > 63) u_panic("bits." #NAME " shift must be between 0 and 63, got %lld", (long long)n); \
+    return uv_int(EXPR); \
+}
+
+UB_TWO(and, a & b)
+UB_TWO(or, a | b)
+UB_TWO(xor, a ^ b)
+UB_SHIFT(shl, (int64_t)((uint64_t)a << n))
+UB_SHIFT(shr, a >> n)
+UB_SHIFT(ushr, (int64_t)((uint64_t)a >> n))
+
+U_BUILTIN_FN(ubits_not) {
+    (void)env_;
+    U_ARGC("bits.not", 1);
+    return uv_int(~ub_int_arg("bits.not", argv, 0));
+}
+
+U_BUILTIN_FN(ubits_count) {
+    (void)env_;
+    U_ARGC("bits.count", 1);
+    return uv_int(__builtin_popcountll((unsigned long long)ub_int_arg("bits.count", argv, 0)));
+}
+
+/* os: builtins/system.go is the interpreter's copy */
+
+static const char *uos_path(const char *name, int argc, UValue *argv) {
+    U_ARGC(name, 1);
+    char what[64];
+    snprintf(what, sizeof what, "%s path", name);
+    return u_want_str(argv[0], what)->data;
+}
+
+static void uos_fail(const char *name, const char *op, const char *path, int err) {
+    USb sb = {0};
+    sb_printf(&sb, "%s failed: %s %s: ", name, op, path);
+    u_errno_text(&sb, err);
+    u_failf("%s", sb.buf);
+}
+
+U_BUILTIN_FN(uos_exit) {
+    (void)env_;
+    U_ARGC("os.exit", 1);
+    int64_t code = ub_int_arg("os.exit", argv, 0);
+    if (code < 0 || code > 255) u_panic("os.exit code must be between 0 and 255, got %lld", (long long)code);
+    fflush(stdout);
+    fflush(stderr);
+    exit((int)code);
+}
+
+U_BUILTIN_FN(uos_exists) {
+    (void)env_;
+    struct stat st;
+    return uv_bool(stat(uos_path("os.exists", argc, argv), &st) == 0);
+}
+
+U_BUILTIN_FN(uos_is_dir) {
+    (void)env_;
+    struct stat st;
+    return uv_bool(stat(uos_path("os.is_dir", argc, argv), &st) == 0 && S_ISDIR(st.st_mode));
+}
+
+U_BUILTIN_FN(uos_cwd) {
+    (void)env_; (void)argv;
+    U_ARGC("os.cwd", 0);
+    char *dir = getcwd(NULL, 0);
+    if (!dir) { USb sb = {0}; u_errno_text(&sb, errno); u_panic("os.cwd failed: %s", sb.buf); }
+    UValue v = uv_cstr(dir);
+    free(dir);
+    return v;
+}
+
+U_BUILTIN_FN(uos_getpid) {
+    (void)env_; (void)argv;
+    U_ARGC("os.getpid", 0);
+    return uv_int((int64_t)getpid());
+}
+
+static int u_cmp_cstr_p(const void *a, const void *b) {
+    return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
+static UValue uos_list_dir_impl(const char *name, int argc, UValue *argv) {
+    const char *path = uos_path(name, argc, argv);
+    struct stat st;
+    if (stat(path, &st) != 0) uos_fail(name, "stat", path, errno);
+    if (!S_ISDIR(st.st_mode)) u_failf("%s failed: %s is not a directory", name, path);
+    DIR *d = opendir(path);
+    if (!d) uos_fail(name, "open", path, errno);
+    char **names = NULL;
+    size_t n = 0, cap = 0;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        if (n == cap) { cap = cap ? cap * 2 : 16; names = u_xrealloc(names, cap * sizeof(char *)); }
+        names[n++] = strdup(e->d_name);
+    }
+    closedir(d);
+    qsort(names, n, sizeof(char *), u_cmp_cstr_p);
+    UArr *a = u_arr_new(n);
+    for (size_t i = 0; i < n; i++) { u_arr_push(a, uv_cstr(names[i])); free(names[i]); }
+    free(names);
+    return uv_arrv(a);
+}
+
+static UValue uos_mkdir_impl(const char *name, int argc, UValue *argv) {
+    const char *path = uos_path(name, argc, argv);
+    if (mkdir(path, 0755) != 0) uos_fail(name, "mkdir", path, errno);
+    return uv_nil();
+}
+
+/* like Go's os.Remove: unlink, then rmdir, and pick the error that's real */
+static UValue uos_remove_impl(const char *name, int argc, UValue *argv) {
+    const char *path = uos_path(name, argc, argv);
+    if (unlink(path) == 0) return uv_nil();
+    int e1 = errno;
+    if (rmdir(path) == 0) return uv_nil();
+    int e2 = errno;
+    uos_fail(name, "remove", path, e2 != ENOTDIR ? e2 : e1);
+    return uv_nil();
+}
+
+U_BUILTIN_FN(uos_list_dir) { (void)env_; return uos_list_dir_impl("os.list_dir", argc, argv); }
+U_BUILTIN_FN(uos_try_list_dir) { (void)env_; U_ATTEMPT(uos_list_dir_impl("os.try_list_dir", argc, argv)); }
+U_BUILTIN_FN(uos_mkdir) { (void)env_; return uos_mkdir_impl("os.mkdir", argc, argv); }
+U_BUILTIN_FN(uos_try_mkdir) { (void)env_; U_ATTEMPT(uos_mkdir_impl("os.try_mkdir", argc, argv)); }
+U_BUILTIN_FN(uos_remove) { (void)env_; return uos_remove_impl("os.remove", argc, argv); }
+U_BUILTIN_FN(uos_try_remove) { (void)env_; U_ATTEMPT(uos_remove_impl("os.try_remove", argc, argv)); }
+
 /* module tables */
 
 typedef struct { const char *name; UCode code; const char *qualified; } UBuiltinDef;
@@ -2433,6 +2581,16 @@ static const UBuiltinDef u_mem_defs[] = {
     {"get_f32", um_get_f32, "mem.get_f32"}, {"set_f32", um_set_f32, "mem.set_f32"},
     {"get_f64", um_get_f64, "mem.get_f64"}, {"set_f64", um_set_f64, "mem.set_f64"},
     {NULL, NULL, NULL}};
+static const UBuiltinDef u_bits_defs[] = {
+    {"and", ubits_and, "bits.and"}, {"or", ubits_or, "bits.or"}, {"xor", ubits_xor, "bits.xor"},
+    {"not", ubits_not, "bits.not"}, {"count", ubits_count, "bits.count"}, {"shl", ubits_shl, "bits.shl"},
+    {"shr", ubits_shr, "bits.shr"}, {"ushr", ubits_ushr, "bits.ushr"}, {NULL, NULL, NULL}};
+static const UBuiltinDef u_os_defs[] = {
+    {"exit", uos_exit, "os.exit"}, {"exists", uos_exists, "os.exists"}, {"is_dir", uos_is_dir, "os.is_dir"},
+    {"cwd", uos_cwd, "os.cwd"}, {"getpid", uos_getpid, "os.getpid"},
+    {"list_dir", uos_list_dir, "os.list_dir"}, {"try_list_dir", uos_try_list_dir, "os.try_list_dir"},
+    {"mkdir", uos_mkdir, "os.mkdir"}, {"try_mkdir", uos_try_mkdir, "os.try_mkdir"},
+    {"remove", uos_remove, "os.remove"}, {"try_remove", uos_try_remove, "os.try_remove"}, {NULL, NULL, NULL}};
 static const UBuiltinDef u_shell_defs[] = {
     {"run", ush_run, "shell.run"}, {"try_run", ush_try_run, "shell.try_run"}, {NULL, NULL, NULL}};
 
@@ -2447,6 +2605,8 @@ static UValue u_std_module(const char *name) {
     else if (!strcmp(name, "process")) defs = u_process_defs;
     else if (!strcmp(name, "shell")) defs = u_shell_defs;
     else if (!strcmp(name, "mem")) defs = u_mem_defs;
+    else if (!strcmp(name, "bits")) defs = u_bits_defs;
+    else if (!strcmp(name, "os")) defs = u_os_defs;
     else u_panic("unknown standard module %s", name);
     int n = 0;
     while (defs[n].name) n++;

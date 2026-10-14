@@ -51,6 +51,9 @@ func runSource(input, baseDir, file string, out io.Writer, errOut io.Writer) int
 	ctx := evaluator.NewContext(baseDir, out)
 	ctx.File = file
 	result := evaluator.EvalWithContext(program, env, ctx)
+	if exit, ok := result.(*object.ExitSignal); ok {
+		return exit.Code
+	}
 	if errObj, ok := result.(*object.Error); ok {
 		fmt.Fprintln(errOut, errObj.Inspect())
 		return 1

@@ -311,6 +311,29 @@ var StdModules = map[string]map[string]*Signature{
 		"try_run": sig("shell.try_run", 1, 1, KResult, KString),
 	},
 	"mem": memSignatures(),
+	"bits": {
+		"and":   sig("bits.and", 2, 2, KInt, KInt, KInt),
+		"or":    sig("bits.or", 2, 2, KInt, KInt, KInt),
+		"xor":   sig("bits.xor", 2, 2, KInt, KInt, KInt),
+		"not":   sig("bits.not", 1, 1, KInt, KInt),
+		"count": sig("bits.count", 1, 1, KInt, KInt),
+		"shl":   sig("bits.shl", 2, 2, KInt, KInt, KInt),
+		"shr":   sig("bits.shr", 2, 2, KInt, KInt, KInt),
+		"ushr":  sig("bits.ushr", 2, 2, KInt, KInt, KInt),
+	},
+	"os": {
+		"exit":         sig("os.exit", 1, 1, KNever, KInt),
+		"exists":       sig("os.exists", 1, 1, KBool, KString),
+		"is_dir":       sig("os.is_dir", 1, 1, KBool, KString),
+		"cwd":          sig("os.cwd", 0, 0, KString),
+		"getpid":       sig("os.getpid", 0, 0, KInt),
+		"list_dir":     sig("os.list_dir", 1, 1, KArray, KString),
+		"try_list_dir": sig("os.try_list_dir", 1, 1, KResult, KString),
+		"mkdir":        sig("os.mkdir", 1, 1, KNil, KString),
+		"try_mkdir":    sig("os.try_mkdir", 1, 1, KResult, KString),
+		"remove":       sig("os.remove", 1, 1, KNil, KString),
+		"try_remove":   sig("os.try_remove", 1, 1, KResult, KString),
+	},
 }
 
 func memSignatures() map[string]*Signature {

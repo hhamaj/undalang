@@ -1,0 +1,25 @@
+// bits for flags and masks, os for the file system and the exit code
+
+import "bits" as bits
+import "os" as os
+
+let read = bits.shl(1, 0)
+let write = bits.shl(1, 1)
+let exec = bits.shl(1, 2)
+
+fn describe(mode: int) -> string {
+    let mut out = ""
+    for pair in [[read, "r"], [write, "w"], [exec, "x"]] {
+        if bits.and(mode, pair[0]) != 0 { out = out + pair[1] } else { out = out + "-" }
+    }
+    out
+}
+
+let mode = bits.or(read, exec)
+println(describe(mode), describe(bits.xor(mode, write)), bits.count(mode), "flags set")
+
+if !os.is_dir(".") {
+    println("no working directory?")
+    os.exit(1)
+}
+println("examples here:", os.exists("examples") && os.is_dir("examples"))

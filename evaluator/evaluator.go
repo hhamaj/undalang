@@ -320,7 +320,7 @@ func evalProgram(program *ast.Program, env *object.Environment, ctx *Context) ob
 		switch result := result.(type) {
 		case *object.ReturnValue:
 			return result.Value
-		case *object.Error:
+		case *object.Error, *object.ExitSignal:
 			return result
 		case *object.BreakSignal, *object.ContinueSignal:
 			return newError("%s outside loop", result.Inspect())
@@ -362,7 +362,7 @@ func loopControl(result object.Object) (stop bool, value object.Object) {
 		return true, nilObj
 	case *object.ContinueSignal:
 		return false, nil
-	case *object.ReturnValue, *object.Error:
+	case *object.ReturnValue, *object.Error, *object.ExitSignal:
 		return true, result
 	}
 	return false, nil
@@ -1099,7 +1099,7 @@ func isError(obj object.Object) bool {
 // return/break/continue signals. they propagate through every expression
 func isAbrupt(obj object.Object) bool {
 	switch obj.(type) {
-	case *object.Error, *object.ReturnValue, *object.BreakSignal, *object.ContinueSignal:
+	case *object.Error, *object.ReturnValue, *object.BreakSignal, *object.ContinueSignal, *object.ExitSignal:
 		return true
 	}
 	return false

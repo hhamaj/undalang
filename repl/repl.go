@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"undalang/evaluator"
@@ -44,6 +45,9 @@ func Start(in io.Reader, out io.Writer, errOut io.Writer) {
 		evaluated := evaluator.EvalWithContext(program, env, ctx)
 		if evaluated == nil {
 			continue
+		}
+		if exit, ok := evaluated.(*object.ExitSignal); ok {
+			os.Exit(exit.Code)
 		}
 		if evaluated.Type() == object.ErrorObj {
 			fmt.Fprintln(errOut, evaluated.Inspect())

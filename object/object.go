@@ -398,3 +398,12 @@ func (b *Buffer) Inspect() string {
 	}
 	return fmt.Sprintf("buffer(%d bytes)", len(b.Data))
 }
+
+// ExitSignal is os.exit on its way out. it unwinds like an error, the runner
+// turns it into the process exit code
+type ExitSignal struct {
+	Code int
+}
+
+func (e *ExitSignal) Type() Type      { return "EXIT" }
+func (e *ExitSignal) Inspect() string { return fmt.Sprintf("exit(%d)", e.Code) }

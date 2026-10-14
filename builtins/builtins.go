@@ -129,7 +129,9 @@ func StdModules(apply Applier) map[string]*object.Module {
 			"run":     plain("shell.run", shellRun),
 			"try_run": attempt("shell.try_run", shellRun),
 		}},
-		"mem": {Name: "mem", Members: memModule()},
+		"mem":  {Name: "mem", Members: memModule()},
+		"bits": {Name: "bits", Members: bitsModule()},
+		"os":   {Name: "os", Members: osModule()},
 	}
 }
 
@@ -464,7 +466,7 @@ func arraysMap(apply Applier) object.BuiltinFunction {
 		elements := make([]object.Object, 0, len(arr.Elements))
 		for _, el := range arr.Elements {
 			result := apply(fn, []object.Object{el})
-			if result.Type() == object.ErrorObj {
+			if stops(result) {
 				return result
 			}
 			elements = append(elements, result)
@@ -486,7 +488,7 @@ func arraysFilter(apply Applier) object.BuiltinFunction {
 		elements := []object.Object{}
 		for _, el := range arr.Elements {
 			result := apply(fn, []object.Object{el})
-			if result.Type() == object.ErrorObj {
+			if stops(result) {
 				return result
 			}
 			if truthy(result) {
@@ -510,7 +512,7 @@ func arraysReduce(apply Applier) object.BuiltinFunction {
 		fn := args[2]
 		for _, el := range arr.Elements {
 			acc = apply(fn, []object.Object{acc, el})
-			if acc.Type() == object.ErrorObj {
+			if stops(acc) {
 				return acc
 			}
 		}

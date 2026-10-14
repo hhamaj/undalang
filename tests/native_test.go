@@ -434,17 +434,30 @@ println(mem.size(empty), empty)
 mem.free(b)
 println(b)
 `,
-	"err_mem_bounds":     "import \"mem\" as mem\nlet b = mem.alloc(8)\nprintln(mem.get_i64(b, 0))\nmem.get_i32(b, 5)",
-	"err_mem_negative":   "import \"mem\" as mem\nfn a(n) { mem.alloc(n) }\na(-1)",
-	"err_mem_freed":      "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.free(b)\nmem.set_i8(b, 0, 1)",
-	"err_mem_double":     "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.free(b)\nmem.free(b)",
-	"err_mem_range":      "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.set_u8(b, 0, 255)\nmem.set_i8(b, 0, 128)",
-	"err_mem_u64":        "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.set_i64(b, 0, -1)\nmem.get_u64(b, 0)",
-	"err_mem_nul":        "import \"mem\" as mem\nlet b = mem.alloc(4)\nmem.set_u32(b, 0, 4294967295)\nmem.get_cstring(b, 1)",
-	"err_mem_cstr_room":  "import \"mem\" as mem\nlet b = mem.alloc(4)\nmem.set_cstring(b, 0, \"abc\")\nmem.set_cstring(b, 1, \"abc\")",
-	"err_mem_value":      "import \"mem\" as mem\nfn s(v) { mem.set_f64(mem.alloc(8), 0, v) }\ns(\"x\")",
-	"err_mem_offset":     "import \"mem\" as mem\nfn g(o) { mem.get_u8(mem.alloc(1), o) }\ng(nil)",
-	"err_mem_arity":      "import \"mem\" as mem\nfn g(f) { f(mem.alloc(1)) }\ng(mem.get_u8)",
+	"err_mem_bounds":    "import \"mem\" as mem\nlet b = mem.alloc(8)\nprintln(mem.get_i64(b, 0))\nmem.get_i32(b, 5)",
+	"err_mem_negative":  "import \"mem\" as mem\nfn a(n) { mem.alloc(n) }\na(-1)",
+	"err_mem_freed":     "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.free(b)\nmem.set_i8(b, 0, 1)",
+	"err_mem_double":    "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.free(b)\nmem.free(b)",
+	"err_mem_range":     "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.set_u8(b, 0, 255)\nmem.set_i8(b, 0, 128)",
+	"err_mem_u64":       "import \"mem\" as mem\nlet b = mem.alloc(8)\nmem.set_i64(b, 0, -1)\nmem.get_u64(b, 0)",
+	"err_mem_nul":       "import \"mem\" as mem\nlet b = mem.alloc(4)\nmem.set_u32(b, 0, 4294967295)\nmem.get_cstring(b, 1)",
+	"err_mem_cstr_room": "import \"mem\" as mem\nlet b = mem.alloc(4)\nmem.set_cstring(b, 0, \"abc\")\nmem.set_cstring(b, 1, \"abc\")",
+	"err_mem_value":     "import \"mem\" as mem\nfn s(v) { mem.set_f64(mem.alloc(8), 0, v) }\ns(\"x\")",
+	"err_mem_offset":    "import \"mem\" as mem\nfn g(o) { mem.get_u8(mem.alloc(1), o) }\ng(nil)",
+	"err_mem_arity":     "import \"mem\" as mem\nfn g(f) { f(mem.alloc(1)) }\ng(mem.get_u8)",
+	"bits": `import "bits" as bits
+println(bits.and(12, 10), bits.or(12, 10), bits.xor(12, 10), bits.not(0), bits.not(-1))
+println(bits.shl(1, 62), bits.shl(1, 63), bits.shl(3, 63), bits.shr(-16, 2), bits.ushr(-16, 60), bits.shr(16, 63))
+println(bits.count(0), bits.count(255), bits.count(-1), bits.and(-1, 9223372036854775807))
+fn flag(n) { bits.shl(1, n) }
+println(flag(0), flag(10), bits.or(flag(1), flag(3)))
+`,
+	"err_bits_shift":     "import \"bits\" as bits\nfn s(n) { bits.shl(1, n) }\nprintln(s(63))\ns(64)",
+	"err_bits_arg":       "import \"bits\" as bits\nfn a(v) { bits.and(1, v) }\na(1.5)",
+	"exit_code":          "import \"os\" as os\nprintln(\"before\")\nfn leave(n) { os.exit(n) }\nleave(7)\nprintln(\"after\")",
+	"exit_in_callback":   "import \"os\" as os\nimport \"arrays\" as arrays\narrays.map([1, 2, 3], fn(n) { println(n)\nif n == 2 { os.exit(4) } })\nprintln(\"after\")",
+	"exit_zero":          "import \"os\" as os\nwhile true { os.exit(0) }\nprintln(\"after\")",
+	"err_exit_range":     "import \"os\" as os\nfn e(n) { os.exit(n) }\ne(256)",
 	"err_unhandled":      "fn f() { err(\"boom\") }\nprintln(\"before\")\nlet v = f()?",
 	"err_try_type":       "fn f(v) { v? }\nf(5)",
 	"err_json_result":    "import \"json\" as json\njson.stringify([ok(1)])",
@@ -498,9 +511,47 @@ util.fail(2)
 	compareBackends(t, cc, filepath.Join(dir, "main.unda"))
 }
 
+// os needs a scratch directory, both backends see it through the
+// environment
+func TestNativeOS(t *testing.T) {
+	cc := requireCC(t)
+	dir := t.TempDir()
+	t.Setenv("UNDA_TEST_DIR", filepath.Join(dir, "work"))
+	if err := os.Mkdir(filepath.Join(dir, "work"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	src := `import "os" as os
+import "process" as process
+import "strings" as strings
+let dir = process.env("UNDA_TEST_DIR")
+let sub = dir + "/sub"
+fn clean(e) { strings.replace(e, dir, "DIR") }
+println(os.exists(sub), os.is_dir(dir), os.list_dir(dir))
+os.mkdir(sub)
+write_file(sub + "/b.txt", "x")
+write_file(sub + "/a.txt", "y")
+println(os.exists(sub), os.is_dir(sub), os.is_dir(sub + "/a.txt"), os.list_dir(sub))
+match os.try_mkdir(sub) { ok(_) -> println("made"), err(e) -> println(clean(e)) }
+match os.try_remove(sub) { ok(_) -> println("removed"), err(e) -> println(clean(e)) }
+match os.try_list_dir(sub + "/a.txt") { ok(_) -> println("listed"), err(e) -> println(clean(e)) }
+match os.try_list_dir(sub + "/nope") { ok(_) -> println("listed"), err(e) -> println(clean(e)) }
+match os.try_remove(sub + "/nope") { ok(_) -> println("removed"), err(e) -> println(clean(e)) }
+os.remove(sub + "/a.txt")
+os.remove(sub + "/b.txt")
+os.remove(sub)
+println(os.exists(sub), type(os.getpid()), os.cwd() == os.cwd(), len(os.cwd()) > 0)
+os.mkdir(sub + "/deeper/still")
+`
+	path := filepath.Join(dir, "os_test.unda")
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	compareBackends(t, cc, path)
+}
+
 func TestNativeExamples(t *testing.T) {
 	cc := requireCC(t)
-	for _, name := range []string{"phase0", "mutability", "phase1_data_pipeline", "phase3_types", "phase3_results", "phase4_structs"} {
+	for _, name := range []string{"phase0", "mutability", "phase1_data_pipeline", "phase3_types", "phase3_results", "phase4_structs", "phase4_system"} {
 		t.Run(name, func(t *testing.T) {
 			compareBackends(t, cc, filepath.Join("..", "examples", name+".unda"))
 		})
