@@ -1113,43 +1113,55 @@ static void u_file_error(const char *builtin, const char *op, UStr *path, int er
 }
 
 /*
- * extern (C) calls. these turn Unda values into C arguments and refuse what
- * doesn't fit instead of letting C truncate it
+ * extern (C) calls. these turn Unda values into C values and refuse what
+ * doesn't fit instead of letting C truncate it. what names the value in
+ * errors ("area argument 1"), field is the struct field it came from or ""
  */
 
-static int64_t u_ffi_int(UValue v, const char *fn, int i, int64_t lo, int64_t hi, const char *ctype) {
-    if (v.tag != U_INT) u_panic("%s argument %d must be INTEGER, got %s", fn, i, u_type_name(v));
-    if (v.as.i < lo || v.as.i > hi) u_panic("%s argument %d is out of range for %s: %lld", fn, i, ctype, (long long)v.as.i);
+#define U_FFI_WHO what, field[0] ? " field " : "", field
+
+static int64_t u_ffi_int(UValue v, const char *what, const char *field, int64_t lo, int64_t hi, const char *ctype) {
+    if (v.tag != U_INT) u_panic("%s%s%s must be INTEGER, got %s", U_FFI_WHO, u_type_name(v));
+    if (v.as.i < lo || v.as.i > hi) u_panic("%s%s%s is out of range for %s: %lld", U_FFI_WHO, ctype, (long long)v.as.i);
     return v.as.i;
 }
 
-static uint64_t u_ffi_uint(UValue v, const char *fn, int i, uint64_t hi, const char *ctype) {
-    if (v.tag != U_INT) u_panic("%s argument %d must be INTEGER, got %s", fn, i, u_type_name(v));
-    if (v.as.i < 0 || (uint64_t)v.as.i > hi) u_panic("%s argument %d is out of range for %s: %lld", fn, i, ctype, (long long)v.as.i);
+static uint64_t u_ffi_uint(UValue v, const char *what, const char *field, uint64_t hi, const char *ctype) {
+    if (v.tag != U_INT) u_panic("%s%s%s must be INTEGER, got %s", U_FFI_WHO, u_type_name(v));
+    if (v.as.i < 0 || (uint64_t)v.as.i > hi) u_panic("%s%s%s is out of range for %s: %lld", U_FFI_WHO, ctype, (long long)v.as.i);
     return (uint64_t)v.as.i;
 }
 
-static double u_ffi_float(UValue v, const char *fn, int i) {
-    if (!u_is_num(v)) u_panic("%s argument %d must be number, got %s", fn, i, u_type_name(v));
+static double u_ffi_float(UValue v, const char *what, const char *field) {
+    if (!u_is_num(v)) u_panic("%s%s%s must be number, got %s", U_FFI_WHO, u_type_name(v));
     return u_num(v);
 }
 
-static bool u_ffi_bool(UValue v, const char *fn, int i) {
-    if (v.tag != U_BOOL) u_panic("%s argument %d must be BOOLEAN, got %s", fn, i, u_type_name(v));
+static bool u_ffi_bool(UValue v, const char *what, const char *field) {
+    if (v.tag != U_BOOL) u_panic("%s%s%s must be BOOLEAN, got %s", U_FFI_WHO, u_type_name(v));
     return v.as.b;
 }
 
-static const char *u_ffi_cstring(UValue v, const char *fn, int i) {
-    if (v.tag != U_STR) u_panic("%s argument %d must be STRING, got %s", fn, i, u_type_name(v));
-    if (memchr(v.as.s->data, 0, v.as.s->len)) u_panic("%s argument %d contains a NUL byte", fn, i);
+static const char *u_ffi_cstring(UValue v, const char *what, const char *field) {
+    if (v.tag == U_NIL && field[0]) return NULL;
+    if (v.tag != U_STR) u_panic("%s%s%s must be STRING, got %s", U_FFI_WHO, u_type_name(v));
+    if (memchr(v.as.s->data, 0, v.as.s->len)) u_panic("%s%s%s contains a NUL byte", U_FFI_WHO);
     return v.as.s->data;
 }
 
 /* pointers only come from C and only go back to C. nil stands for NULL */
-static void *u_ffi_ptr(UValue v, const char *fn, int i) {
+static void *u_ffi_ptr(UValue v, const char *what, const char *field) {
     if (v.tag == U_NIL) return NULL;
-    if (v.tag != U_PTR) u_panic("%s argument %d must be POINTER, got %s", fn, i, u_type_name(v));
+    if (v.tag != U_PTR) u_panic("%s%s%s must be POINTER, got %s", U_FFI_WHO, u_type_name(v));
     return v.as.p;
+}
+
+static UValue u_ffi_cstr_out(const char *s) { return s ? uv_cstr(s) : uv_nil(); }
+static UValue u_ffi_ptr_out(void *p) { return p ? uv_ptr(p) : uv_nil(); }
+
+static UValue u_ffi_u64_out(uint64_t r, const char *fn) {
+    if (r > INT64_MAX) u_panic("%s returned %llu, too big for an int", fn, (unsigned long long)r);
+    return uv_int((int64_t)r);
 }
 
 /* global builtins */

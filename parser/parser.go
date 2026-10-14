@@ -61,6 +61,8 @@ type Parser struct {
 	peekToken token.Token
 	// ahead holds tokens read past peekToken by peekAt
 	ahead []token.Token
+	// cFields makes struct fields take C types, inside extern blocks
+	cFields bool
 
 	prefixParseFns map[token.Type]prefixParseFn
 	infixParseFns  map[token.Type]infixParseFn
@@ -347,7 +349,7 @@ func (p *Parser) parseStructStatement() ast.Statement {
 		var typ *ast.TypeAnnotation
 		if p.peekTokenIs(token.Colon) {
 			p.nextToken()
-			if typ = p.parseTypeAnnotation(); typ == nil {
+			if typ = p.fieldType(); typ == nil {
 				return nil
 			}
 		}
@@ -372,6 +374,15 @@ func (p *Parser) parseExternStatement() ast.Statement {
 		return nil
 	}
 	for !p.peekTokenIs(token.RBrace) {
+		if p.peekTokenIs(token.Struct) {
+			p.nextToken()
+			st := p.parseExternStruct()
+			if st == nil {
+				return nil
+			}
+			stmt.Structs = append(stmt.Structs, st)
+			continue
+		}
 		if !p.expectPeek(token.Function) || !p.expectPeek(token.Ident) {
 			return nil
 		}
@@ -412,9 +423,58 @@ func (p *Parser) parseExternStatement() ast.Statement {
 	return stmt
 }
 
+func (p *Parser) fieldType() *ast.TypeAnnotation {
+	if p.cFields {
+		return p.parseCType()
+	}
+	return p.parseTypeAnnotation()
+}
+
+// parseExternStruct parses `struct Name { field: ctype ... }` inside an
+// extern block. the Unda side gets the field types the C types take
+func (p *Parser) parseExternStruct() *ast.ExternStruct {
+	p.cFields = true
+	st, ok := p.parseStructStatement().(*ast.StructStatement)
+	p.cFields = false
+	if !ok || st == nil {
+		return nil
+	}
+	out := &ast.ExternStruct{Decl: st, CTypes: st.Types}
+	st.Types = make([]*ast.TypeAnnotation, len(out.CTypes))
+	for i, t := range out.CTypes {
+		if t == nil || !(ast.CTypes[t.Name] || ast.IsStructName(t.Name)) {
+			p.errors = append(p.errors, p.atCur(fmt.Sprintf("field %s of %s needs a C type", st.Fields[i].Value, st.Name.Value)))
+			return nil
+		}
+		if name := undaTypeForC(t.Name); name != "" {
+			st.Types[i] = &ast.TypeAnnotation{Token: t.Token, Name: name}
+		}
+	}
+	return out
+}
+
+// undaTypeForC is the Unda type a C field takes. cstring and ptr fields can
+// be NULL, so they stay untyped and get checked when converted
+func undaTypeForC(c string) string {
+	switch {
+	case c == "f32" || c == "f64":
+		return "number"
+	case c == "bool":
+		return "bool"
+	case c == "cstring" || c == "ptr":
+		return ""
+	case ast.IsStructName(c):
+		return c
+	}
+	return "int"
+}
+
 func (p *Parser) parseCType() *ast.TypeAnnotation {
 	if !p.expectPeek(token.Ident) {
 		return nil
+	}
+	if ast.IsStructName(p.curToken.Literal) {
+		return &ast.TypeAnnotation{Token: p.curToken, Name: p.curToken.Literal}
 	}
 	if !ast.CTypes[p.curToken.Literal] {
 		hint := ""

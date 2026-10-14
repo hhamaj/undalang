@@ -37,7 +37,8 @@ func GenerateC(prog *semantic.Program) (string, error) {
 	if prog.HasErrors() || prog.Main == nil {
 		return "", fmt.Errorf("cannot generate C for a program with errors")
 	}
-	g := &gen{prog: prog, builtins: map[string]bool{}, types: map[string]string{}}
+	g := &gen{prog: prog, builtins: map[string]bool{}, types: map[string]string{},
+		sdefs: map[*ast.StructStatement]string{}, cstructs: map[string]string{}}
 	for _, mod := range prog.Modules {
 		g.module(mod)
 	}
@@ -79,6 +80,10 @@ type gen struct {
 	externs  int
 	// types holds the UType each annotation was emitted as, by its text
 	types map[string]string
+	// sdefs and cstructs remember what each struct was emitted as: its
+	// UStructDef, and for extern structs the C typedef
+	sdefs    map[*ast.StructStatement]string
+	cstructs map[string]string
 }
 
 var cTypeNames = map[string]string{
@@ -87,24 +92,99 @@ var cTypeNames = map[string]string{
 	"f32": "float", "f64": "double", "bool": "bool", "cstring": "const char *", "ptr": "void *",
 }
 
-// cArg is the conversion from an Unda value to a C argument of type t
-func cArg(t *ast.TypeAnnotation, v, fn string, i int) string {
-	name := cString(fn)
+// cType is the C spelling of an extern type
+func (g *gen) cType(t *ast.TypeAnnotation) string {
+	if t.IsStruct() {
+		return g.cstructs[t.Name]
+	}
+	return cTypeNames[t.Name]
+}
+
+// cArg is the conversion from an Unda value to a C value of type t. what
+// and field are C expressions that name the value in errors, like
+// "area argument 1" and "" or what and "x" for a struct field
+func (g *gen) cArg(t *ast.TypeAnnotation, v, what, field string) string {
 	switch t.Name {
 	case "f32", "f64":
-		return fmt.Sprintf("(%s)u_ffi_float(%s, %s, %d)", cTypeNames[t.Name], v, name, i)
+		return fmt.Sprintf("(%s)u_ffi_float(%s, %s, %s)", cTypeNames[t.Name], v, what, field)
 	case "bool":
-		return fmt.Sprintf("u_ffi_bool(%s, %s, %d)", v, name, i)
+		return fmt.Sprintf("u_ffi_bool(%s, %s, %s)", v, what, field)
 	case "cstring":
-		return fmt.Sprintf("u_ffi_cstring(%s, %s, %d)", v, name, i)
+		return fmt.Sprintf("u_ffi_cstring(%s, %s, %s)", v, what, field)
 	case "ptr":
-		return fmt.Sprintf("u_ffi_ptr(%s, %s, %d)", v, name, i)
+		return fmt.Sprintf("u_ffi_ptr(%s, %s, %s)", v, what, field)
 	case "u64":
-		return fmt.Sprintf("u_ffi_uint(%s, %s, %d, UINT64_MAX, \"u64\")", v, name, i)
+		return fmt.Sprintf("u_ffi_uint(%s, %s, %s, UINT64_MAX, \"u64\")", v, what, field)
 	case "u8", "u16", "u32":
-		return fmt.Sprintf("(%s)u_ffi_uint(%s, %s, %d, UINT%s_MAX, %q)", cTypeNames[t.Name], v, name, i, t.Name[1:], t.Name)
+		return fmt.Sprintf("(%s)u_ffi_uint(%s, %s, %s, UINT%s_MAX, %q)", cTypeNames[t.Name], v, what, field, t.Name[1:], t.Name)
 	}
-	return fmt.Sprintf("(%s)u_ffi_int(%s, %s, %d, INT%s_MIN, INT%s_MAX, %q)", cTypeNames[t.Name], v, name, i, t.Name[1:], t.Name[1:], t.Name)
+	if t.IsStruct() {
+		return fmt.Sprintf("%s_in(%s, %s)", g.cstructs[t.Name], v, what)
+	}
+	return fmt.Sprintf("(%s)u_ffi_int(%s, %s, %s, INT%s_MIN, INT%s_MAX, %q)", cTypeNames[t.Name], v, what, field, t.Name[1:], t.Name[1:], t.Name)
+}
+
+// cResult turns the C value e of type t into an Unda value. fn names the
+// function in errors
+func (g *gen) cResult(t *ast.TypeAnnotation, e, fn string) string {
+	switch {
+	case t.Name == "f32" || t.Name == "f64":
+		return "uv_float((double)" + e + ")"
+	case t.Name == "bool":
+		return "uv_bool(" + e + ")"
+	case t.Name == "cstring":
+		return "u_ffi_cstr_out(" + e + ")"
+	case t.Name == "ptr":
+		return "u_ffi_ptr_out(" + e + ")"
+	case t.Name == "u64":
+		return fmt.Sprintf("u_ffi_u64_out(%s, %s)", e, fn)
+	case t.IsStruct():
+		return fmt.Sprintf("%s_out(%s, %s)", g.cstructs[t.Name], e, fn)
+	}
+	return "uv_int((int64_t)" + e + ")"
+}
+
+// externStruct emits the C typedef for a struct with a C layout and the
+// functions that convert it to and from the Unda struct. C needs a struct's
+// field types first, so fields naming structs of the same block go first
+func (g *gen) externStruct(es *ast.ExternStruct, block []*ast.ExternStruct) {
+	if _, done := g.cstructs[es.Decl.Name.Value]; done {
+		return
+	}
+	g.cstructs[es.Decl.Name.Value] = ""
+	for _, t := range es.CTypes {
+		for _, other := range block {
+			if t.IsStruct() && other.Decl.Name.Value == t.Name {
+				g.externStruct(other, block)
+			}
+		}
+	}
+	sdef := g.structDef(es.Decl)
+	name := "ucs_" + strings.TrimPrefix(sdef, "sdef_")
+	g.cstructs[es.Decl.Name.Value] = name
+	fields := make([]string, len(es.CTypes))
+	in := make([]string, len(es.CTypes))
+	out := make([]string, len(es.CTypes))
+	for i, t := range es.CTypes {
+		f := es.Decl.Fields[i].Value
+		fields[i] = fmt.Sprintf("%s %s;", g.cType(t), f)
+		in[i] = fmt.Sprintf("    c.%s = %s;\n", f, g.cArg(t, fmt.Sprintf("v.as.st->fields[%d]", i), "what", cString(f)))
+		out[i] = fmt.Sprintf("    st->fields[%d] = %s;\n", i, g.cResult(t, "c."+f, "fn"))
+	}
+	fmt.Fprintf(&g.decls, "typedef struct { %s } %s;\n", strings.Join(fields, " "), name)
+	fmt.Fprintf(&g.decls, `static %[1]s %[1]s_in(UValue v, const char *what) {
+    %[1]s c;
+    if (v.tag != U_STRUCT || v.as.st->def != &%[2]s) u_panic("%%s must be %[3]s, got %%s", what, u_type_name(v));
+%[4]s    return c;
+}
+static UValue %[1]s_out(%[1]s c, const char *fn) {
+    (void)fn;
+    UStruct *st = u_alloc(sizeof(UStruct) + %[5]d * sizeof(UValue));
+    st->def = &%[2]s;
+%[6]s    UValue v; v.tag = U_STRUCT; v.as.st = st;
+    return v;
+}
+`, name, sdef, es.Decl.Name.Value, strings.Join(in, ""), max(len(es.CTypes), 1), strings.Join(out, ""))
 }
 
 // externFunc emits the C declaration of an extern function and a builtin
@@ -116,35 +196,22 @@ func (g *gen) externFunc(fn *ast.ExternFunc) string {
 	id := fmt.Sprintf("ufx_%d", g.externs)
 	ret := "void"
 	if fn.Return != nil {
-		ret = cTypeNames[fn.Return.Name]
+		ret = g.cType(fn.Return)
 	}
 	params := make([]string, len(fn.Types))
 	args := make([]string, len(fn.Types))
 	for i, t := range fn.Types {
-		params[i] = cTypeNames[t.Name]
-		args[i] = cArg(t, fmt.Sprintf("argv[%d]", i), fn.Name.Value, i+1)
+		params[i] = g.cType(t)
+		args[i] = g.cArg(t, fmt.Sprintf("argv[%d]", i), cString(fmt.Sprintf("%s argument %d", fn.Name.Value, i+1)), `""`)
 	}
 	if len(params) == 0 {
 		params = []string{"void"}
 	}
 	fmt.Fprintf(&g.decls, "extern %s %s(%s) __asm__(%s);\n", ret, id, strings.Join(params, ", "), cString(fn.Name.Value))
 	call := fmt.Sprintf("%s(%s)", id, strings.Join(args, ", "))
-	var result string
-	switch {
-	case fn.Return == nil:
-		result = call + ";\n    return uv_nil();"
-	case fn.Return.Name == "f32" || fn.Return.Name == "f64":
-		result = "return uv_float((double)" + call + ");"
-	case fn.Return.Name == "bool":
-		result = "return uv_bool(" + call + ");"
-	case fn.Return.Name == "cstring":
-		result = "const char *r_ = " + call + ";\n    return r_ ? uv_cstr(r_) : uv_nil();"
-	case fn.Return.Name == "ptr":
-		result = "void *r_ = " + call + ";\n    return r_ ? uv_ptr(r_) : uv_nil();"
-	case fn.Return.Name == "u64":
-		result = fmt.Sprintf("uint64_t r_ = %s;\n    if (r_ > INT64_MAX) u_panic(\"%%s returned %%llu, too big for an int\", %s, (unsigned long long)r_);\n    return uv_int((int64_t)r_);", call, cString(fn.Name.Value))
-	default:
-		result = "return uv_int((int64_t)" + call + ");"
+	result := call + ";\n    return uv_nil();"
+	if fn.Return != nil {
+		result = "return " + g.cResult(fn.Return, call, cString(fn.Name.Value)) + ";"
 	}
 	fmt.Fprintf(&g.defs, "static UValue %s_call(UFrame *env_, int argc, UValue *argv) {\n    (void)env_; (void)argv;\n    U_ARGC(%s, %d);\n    %s\n}\n\n",
 		id, cString(fn.Name.Value), len(fn.Types), result)
@@ -303,6 +370,9 @@ func (g *gen) typeDesc(t *ast.TypeAnnotation) string {
 // structDef emits the static definition for a struct statement and returns
 // its C name
 func (g *gen) structDef(s *ast.StructStatement) string {
+	if name, ok := g.sdefs[s]; ok {
+		return name
+	}
 	g.structs++
 	name := fmt.Sprintf("sdef_%d", g.structs)
 	fields := make([]string, len(s.Fields))
@@ -322,6 +392,7 @@ func (g *gen) structDef(s *ast.StructStatement) string {
 	fmt.Fprintf(&g.decls, "static const UType *const %s_types[] = {%s};\n", name, strings.Join(types, ", "))
 	fmt.Fprintf(&g.decls, "static const char *%s_tnames[] = {%s};\n", name, strings.Join(tnames, ", "))
 	fmt.Fprintf(&g.decls, "static UStructDef %s = {%s, %d, %s_fields, %s_types, %s_tnames};\n", name, cString(s.Name.Value), len(s.Fields), name, name, name)
+	g.sdefs[s] = name
 	return name
 }
 
@@ -389,6 +460,10 @@ func (f *fgen) stmt(s ast.Statement) string {
 		f.line("return %s;", v)
 		return "uv_nil()"
 	case *ast.ExternStatement:
+		for _, es := range s.Structs {
+			f.g.externStruct(es, s.Structs)
+			f.line("S[%d] = uv_sdef(&%s);", f.mod.Decls[es.Decl].Slot, f.g.structDef(es.Decl))
+		}
 		for _, fn := range s.Funcs {
 			f.line("S[%d] = u_builtin(%s, %s);", f.mod.Bindings[fn.Name].Slot, f.g.externFunc(fn), cString(fn.Name.Value))
 		}

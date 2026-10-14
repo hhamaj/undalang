@@ -203,7 +203,8 @@ Status:
 - C FFI: `extern "lib" { fn name(a: i32) -> f64 }` with integer, float, bool and cstring types, checked conversions, linking by library name or path. native backend only for now; the interpreter would need cgo or a dlopen library such as purego
 - opaque pointers: `ptr` in extern signatures and annotations for handles C gives out (`FILE *`, library objects). Unda code holds, compares and passes them back, nothing more; NULL is nil. this is the deliberately narrow pointer story: Unda values stay values, raw memory stays on the C side
 - element types: `array[int]`, `map[string, array[Point]]`, nested and with structs. checked statically from literals, indexing and for loops, and at runtime element by element, naming the first element that doesn't fit
-- next: C struct layouts over FFI, a small module for C-owned buffers
+- C structs: `struct` inside an extern block gets a C layout and passes to and from C by value, nested structs included. the Unda side is an ordinary struct, conversions are checked field by field
+- next: a small module for C-owned buffers, low-level modules (bits, os)
 
 Potential deliverables:
 - structs and user-defined data layouts

@@ -124,7 +124,16 @@ func (ss *StructStatement) String() string {
 type ExternStatement struct {
 	Token   token.Token
 	Library *StringLiteral
+	Structs []*ExternStruct
 	Funcs   []*ExternFunc
+}
+
+// ExternStruct is a struct with a C layout, declared inside an extern block.
+// Decl is the Unda side, an ordinary struct whose field types are what the C
+// types take (an i32 field is an int). CTypes are the C field types
+type ExternStruct struct {
+	Decl   *StructStatement
+	CTypes []*TypeAnnotation
 }
 
 type ExternFunc struct {
@@ -148,9 +157,16 @@ var CTypes = map[string]bool{
 func (es *ExternStatement) statementNode()       {}
 func (es *ExternStatement) TokenLiteral() string { return es.Token.Literal }
 func (es *ExternStatement) String() string {
-	fns := make([]string, len(es.Funcs))
-	for i, f := range es.Funcs {
-		fns[i] = "fn " + f.Name.String() + Signature(f.Params, f.Types, f.Return)
+	fns := make([]string, 0, len(es.Structs)+len(es.Funcs))
+	for _, s := range es.Structs {
+		fields := make([]string, len(s.CTypes))
+		for i, t := range s.CTypes {
+			fields[i] = s.Decl.Fields[i].String() + ": " + t.String()
+		}
+		fns = append(fns, "struct "+s.Decl.Name.String()+" { "+strings.Join(fields, ", ")+" }")
+	}
+	for _, f := range es.Funcs {
+		fns = append(fns, "fn "+f.Name.String()+Signature(f.Params, f.Types, f.Return))
 	}
 	return "extern " + es.Library.String() + " { " + strings.Join(fns, "; ") + " }"
 }

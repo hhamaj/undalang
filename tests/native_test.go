@@ -598,6 +598,12 @@ void counter_inc(void *c) { ((Counter *)c)->n++; }
 int32_t counter_get(void *c) { return ((Counter *)c)->n; }
 void counter_free(void *c) { free(c); }
 void *nothing(void) { return 0; }
+typedef struct { double x, y; } Vec2;
+typedef struct { Vec2 min, max; const char *name; int32_t id; } Box;
+Vec2 vec_scale(Vec2 v, double by) { Vec2 r = {v.x * by, v.y * by}; return r; }
+Box box_grow(Box b, double by) { b.max = vec_scale(b.max, by); b.id++; return b; }
+double box_area(Box b) { return (b.max.x - b.min.x) * (b.max.y - b.min.y); }
+int name_set(Box b) { return b.name != 0; }
 `
 	if err := os.WriteFile(filepath.Join(dir, "geo.c"), []byte(lib), 0644); err != nil {
 		t.Fatal(err)
@@ -663,6 +669,42 @@ println(read_file(path))`, "2 pointer true false nil nil\nwritten from unda\n", 
 		{"ptr arg type", `extern "./libgeo.so" { fn counter_get(c: ptr) -> i32 }
 fn g(v) { counter_get(v) }
 g(5)`, "", "counter_get argument 1 must be POINTER, got INTEGER"},
+		{"c structs", `extern "./libgeo.so" {
+    struct Vec2 { x: f64, y: f64 }
+    struct Box {
+        min: Vec2
+        max: Vec2
+        name: cstring
+        id: i32
+    }
+    fn vec_scale(v: Vec2, by: f64) -> Vec2
+    fn box_grow(b: Box, by: f64) -> Box
+    fn box_area(b: Box) -> f64
+    fn name_set(b: Box) -> i32
+}
+let b = Box(Vec2(0, 0), Vec2(2, 3), "room", 7)
+let g = box_grow(b, 2)
+println(vec_scale(Vec2(1, 2), 3), g, box_area(b), box_area(g))
+println(name_set(b), name_set(Box(Vec2(0, 0), Vec2(0, 0), nil, 0)), type(g), g == box_grow(b, 2))
+let mut moved = b
+moved.min.x = -1
+println(box_area(moved))
+`, "Vec2(x: 3, y: 6) Box(min: Vec2(x: 0, y: 0), max: Vec2(x: 4, y: 6), name: room, id: 8) 6 24\n1 0 box true\n9\n", ""},
+		{"c struct field range", `extern "./libgeo.so" {
+    struct Box { min: Vec2, max: Vec2, name: cstring, id: i32 }
+    struct Vec2 { x: f64, y: f64 }
+    fn box_area(b: Box) -> f64
+}
+fn area(id) { box_area(Box(Vec2(0, 0), Vec2(1, 1), "x", id)) }
+println(area(1))
+area(5000000000)`, "1\n", "box_area argument 1 field id is out of range for i32: 5000000000"},
+		{"c struct wrong struct", `extern "./libgeo.so" {
+    struct Vec2 { x: f64, y: f64 }
+    fn vec_scale(v: Vec2, by: f64) -> Vec2
+}
+struct Other { x, y }
+fn s(v) { vec_scale(v, 1) }
+s(Other(1, 2))`, "", "vec_scale argument 1 must be Vec2, got Other"},
 		{"u64 result", `extern "./libgeo.so" { fn huge() -> u64 }
 huge()`, "", "huge returned 18446744073709551615, too big for an int"},
 	}

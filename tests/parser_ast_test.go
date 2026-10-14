@@ -179,6 +179,7 @@ func TestParserReportsOneErrorPerStatement(t *testing.T) {
 		"extern \"m\" { fn cos(x) }":                {"line 1:22 expected next token to be :, got ) instead"},
 		"let m: map[float, int] = {}":               {`line 1:22 map keys can't be float, use int, string, bool, nil or any`},
 		"let m: array[int = 1":                      {"line 1:18 expected next token to be ], got = instead"},
+		"extern \"c\" { struct S { n } }":           {"line 1:27 field n of S needs a C type"},
 		"let x: integer = 1":                        {`line 1:8 unknown type "integer" (did you mean "int"?)`},
 		"let x: strin = \"\"":                       {`line 1:8 unknown type "strin" (did you mean "string"?)`},
 		"fn f(a: ) { a }":                           {"line 1:9 expected next token to be IDENT, got ) instead"},

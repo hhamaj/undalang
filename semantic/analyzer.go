@@ -163,20 +163,24 @@ type analyzer struct {
 	// name. types refer to structs by name, so two with the same name make it
 	// ambiguous and the checker stops guessing
 	structs map[string][]*ast.StructStatement
-	opts    Options
-	prog    *Program
-	loading map[string]bool
-	loaded  map[string]*Module
-	nextFn  int
+	// cStructs are the structs declared inside extern blocks, the only ones
+	// with a C layout
+	cStructs map[*ast.StructStatement]bool
+	opts     Options
+	prog     *Program
+	loading  map[string]bool
+	loaded   map[string]*Module
+	nextFn   int
 }
 
 func newAnalyzer(opts Options) *analyzer {
 	return &analyzer{
-		opts:    opts,
-		structs: map[string][]*ast.StructStatement{},
-		prog:    &Program{sources: map[string]string{}},
-		loading: map[string]bool{},
-		loaded:  map[string]*Module{},
+		opts:     opts,
+		structs:  map[string][]*ast.StructStatement{},
+		cStructs: map[*ast.StructStatement]bool{},
+		prog:     &Program{sources: map[string]string{}},
+		loading:  map[string]bool{},
+		loaded:   map[string]*Module{},
 	}
 }
 
@@ -272,6 +276,12 @@ func (c *checker) run() {
 	walk(c.mod.Program, func(n ast.Node) bool {
 		if s, ok := n.(*ast.StructStatement); ok {
 			c.a.structs[s.Name.Value] = append(c.a.structs[s.Name.Value], s)
+		}
+		if s, ok := n.(*ast.ExternStatement); ok {
+			for _, es := range s.Structs {
+				c.a.structs[es.Decl.Name.Value] = append(c.a.structs[es.Decl.Name.Value], es.Decl)
+				c.a.cStructs[es.Decl] = true
+			}
 		}
 		return true
 	})
@@ -516,11 +526,22 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 		return kindType(KNever)
 	case *ast.ExternStatement:
 		c.library(s.Library.Value)
+		for _, es := range s.Structs {
+			for _, t := range es.CTypes {
+				c.checkCStruct(t)
+				if t.IsStruct() && t.Name == es.Decl.Name.Value {
+					c.errorf(t, "%s can't hold itself by value", t.Name)
+				}
+			}
+			c.mod.Decls[es.Decl] = c.declare(sc, es.Decl.Name.Value, false, Type{Kind: KStructDef, Arity: -1, Struct: es.Decl}, nil)
+		}
 		for _, fn := range s.Funcs {
 			params := make([]Kind, len(fn.Types))
 			for i, t := range fn.Types {
+				c.checkCStruct(t)
 				params[i] = cTypeKind(t, false)
 			}
+			c.checkCStruct(fn.Return)
 			sg := sig(fn.Name.Value, len(params), len(params), cTypeKind(fn.Return, true), params...)
 			c.mod.Bindings[fn.Name] = c.declare(sc, fn.Name.Value, false, Type{Kind: KBuiltin, Arity: -1, Builtin: sg}, nil)
 		}
@@ -671,6 +692,20 @@ func (c *checker) fieldAssign(s *ast.AssignStatement, cur, v Type) {
 	}
 }
 
+// checkCStruct reports a struct used as a C type without a C layout
+func (c *checker) checkCStruct(t *ast.TypeAnnotation) {
+	if t == nil || !t.IsStruct() {
+		return
+	}
+	decl := c.lookupStruct(t.Name)
+	switch {
+	case decl == nil:
+		c.checkAnnot(t)
+	case !c.a.cStructs[decl]:
+		c.errorf(t, "%s has no C layout, declare it inside an extern block", t.Name)
+	}
+}
+
 // cTypeKind is the Unda kind a C type takes as an argument or gives back
 func cTypeKind(t *ast.TypeAnnotation, result bool) Kind {
 	switch {
@@ -689,6 +724,8 @@ func cTypeKind(t *ast.TypeAnnotation, result bool) Kind {
 		return KString
 	case t.Name == "ptr":
 		return KPointer | KNil
+	case t.IsStruct():
+		return KStruct
 	}
 	return KInt
 }

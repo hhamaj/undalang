@@ -228,6 +228,21 @@ if f == nil { println("could not open") } else {
 }
 ``` Arguments are converted when the call happens and must fit: an int that doesn't fit an `i32` or a negative int for a `u64` is a runtime error, not a silent truncation.
 
+A struct declared inside an extern block gets a C layout, fields in order with C types, and can go to and come back from C by value. On the Unda side it's an ordinary struct (an `i32` field takes an int, an `f64` field a number):
+
+```unda
+extern "./libgeo.so" {
+    struct Vec2 { x: f64, y: f64 }
+    struct Box { min: Vec2, max: Vec2, name: cstring, id: i32 }
+    fn vec_scale(v: Vec2, by: f64) -> Vec2
+    fn box_area(b: Box) -> f64
+}
+
+println(vec_scale(Vec2(1, 2), 3))    // Vec2(x: 3, y: 6)
+```
+
+Only structs declared this way can cross into C; `cstring` and `ptr` fields may be `nil` (NULL).
+
 The library is `"c"` for libc, a name like `"m"` or `"sqlite3"` to link `-lm` / `-lsqlite3`, or a path to a `.so` or `.a` file (relative to the source file). Shared libraries given by path are found again at runtime through an rpath.
 
 Extern functions only work in the native backend (`unda build`, `unda run --native`); the interpreter stops at the `extern` block with an error. Declaring a function with the wrong C signature is undefined behavior, same as in C.
