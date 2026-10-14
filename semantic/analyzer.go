@@ -117,7 +117,10 @@ type Program struct {
 	// Modules lists every loaded module, dependencies before dependents
 	Modules     []*Module
 	Diagnostics []diag.Diagnostic
-	sources     map[string]string
+	// Libraries are the C compiler arguments that link what extern blocks
+	// use, like "-lm" or the absolute path of a shared library
+	Libraries []string
+	sources   map[string]string
 }
 
 // Source returns the text of the file a diagnostic points at
@@ -489,6 +492,17 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 			c.errorf(s, "type mismatch: %s %s, got %s", returnLabel(c.fn), c.fn.ReturnType.Name, t.Name())
 		}
 		return kindType(KNever)
+	case *ast.ExternStatement:
+		c.library(s.Library.Value)
+		for _, fn := range s.Funcs {
+			params := make([]Kind, len(fn.Types))
+			for i, t := range fn.Types {
+				params[i] = cTypeKind(t, false)
+			}
+			sg := sig(fn.Name.Value, len(params), len(params), cTypeKind(fn.Return, true), params...)
+			c.mod.Bindings[fn.Name] = c.declare(sc, fn.Name.Value, false, Type{Kind: KBuiltin, Arity: -1, Builtin: sg}, nil)
+		}
+		return kindType(KNil)
 	case *ast.StructStatement:
 		for _, typ := range s.Types {
 			c.checkAnnot(typ)
@@ -608,6 +622,50 @@ func (c *checker) fieldAssign(s *ast.AssignStatement, cur, v Type) {
 		}
 		cur = c.annotType(decl.Types[idx])
 	}
+}
+
+// cTypeKind is the Unda kind a C type takes as an argument or gives back
+func cTypeKind(t *ast.TypeAnnotation, result bool) Kind {
+	switch {
+	case t == nil:
+		return KNil
+	case t.Name == "f32" || t.Name == "f64":
+		if result {
+			return KFloat
+		}
+		return KNumber
+	case t.Name == "bool":
+		return KBool
+	case t.Name == "cstring" && result:
+		return KString | KNil
+	case t.Name == "cstring":
+		return KString
+	}
+	return KInt
+}
+
+// library records what the C compiler needs to link an extern block's
+// library. a bare name like "m" becomes -lm, "c" is libc and needs nothing,
+// anything that looks like a path is linked as that file
+func (c *checker) library(lib string) {
+	var arg string
+	switch {
+	case lib == "c":
+		return
+	case strings.Contains(lib, "/") || strings.HasSuffix(lib, ".so") || strings.HasSuffix(lib, ".a"):
+		arg = lib
+		if !filepath.IsAbs(arg) {
+			arg = filepath.Join(c.mod.Dir, arg)
+		}
+	default:
+		arg = "-l" + lib
+	}
+	for _, have := range c.a.prog.Libraries {
+		if have == arg {
+			return
+		}
+	}
+	c.a.prog.Libraries = append(c.a.prog.Libraries, arg)
 }
 
 func fieldIndex(decl *ast.StructStatement, name string) int {

@@ -116,6 +116,44 @@ func (ss *StructStatement) String() string {
 	return "struct " + ss.Name.String() + " { " + strings.Join(parts, ", ") + " }"
 }
 
+// ExternStatement declares C functions from a library:
+//
+//	extern "m" { fn cos(x: f64) -> f64 }
+//
+// each one gets bound to its name. only the native backend can call them
+type ExternStatement struct {
+	Token   token.Token
+	Library *StringLiteral
+	Funcs   []*ExternFunc
+}
+
+type ExternFunc struct {
+	Name   *Identifier
+	Params []*Identifier
+	// Types are the C types of the parameters, every parameter has one
+	Types []*TypeAnnotation
+	// Return is nil for void
+	Return *TypeAnnotation
+}
+
+// CTypes are the C types extern functions can take and return. cstring is a
+// NUL-terminated char pointer, void only goes in return position
+var CTypes = map[string]bool{
+	"i8": true, "i16": true, "i32": true, "i64": true,
+	"u8": true, "u16": true, "u32": true, "u64": true,
+	"f32": true, "f64": true, "bool": true, "cstring": true,
+}
+
+func (es *ExternStatement) statementNode()       {}
+func (es *ExternStatement) TokenLiteral() string { return es.Token.Literal }
+func (es *ExternStatement) String() string {
+	fns := make([]string, len(es.Funcs))
+	for i, f := range es.Funcs {
+		fns[i] = "fn " + f.Name.String() + Signature(f.Params, f.Types, f.Return)
+	}
+	return "extern " + es.Library.String() + " { " + strings.Join(fns, "; ") + " }"
+}
+
 type ReturnStatement struct {
 	Token       token.Token
 	ReturnValue Expression
@@ -698,6 +736,8 @@ func Position(node Node) (line, column int) {
 	case *ImportStatement:
 		tok = n.Token
 	case *StructStatement:
+		tok = n.Token
+	case *ExternStatement:
 		tok = n.Token
 	case *WhileStatement:
 		tok = n.Token

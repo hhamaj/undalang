@@ -50,11 +50,13 @@ func Build(path string, opts Options) error {
 	if opts.Output == "" {
 		return nil
 	}
-	return CompileC(src, opts.Output, opts.CC)
+	return CompileC(src, opts.Output, opts.CC, prog.Libraries...)
 }
 
-// CompileC writes src to a temp file and compiles it to output
-func CompileC(src, output, cc string) error {
+// CompileC writes src to a temp file and compiles it to output. libs are
+// extra linker arguments, a shared library given by path also gets an rpath
+// so the executable finds it at runtime
+func CompileC(src, output, cc string, libs ...string) error {
 	if cc == "" {
 		cc = os.Getenv("CC")
 	}
@@ -70,7 +72,14 @@ func CompileC(src, output, cc string) error {
 	if err := os.WriteFile(cfile, []byte(src), 0644); err != nil {
 		return err
 	}
-	cmd := exec.Command(cc, "-std=gnu11", "-O2", "-o", output, cfile, "-lm", "-pthread")
+	args := []string{"-std=gnu11", "-O2", "-o", output, cfile, "-lm", "-pthread"}
+	for _, lib := range libs {
+		args = append(args, lib)
+		if strings.HasSuffix(lib, ".so") || strings.Contains(lib, ".so.") {
+			args = append(args, "-Wl,-rpath,"+filepath.Dir(lib))
+		}
+	}
+	cmd := exec.Command(cc, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	cmd.Stdout = &stderr

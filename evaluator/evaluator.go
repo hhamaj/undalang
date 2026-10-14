@@ -126,6 +126,8 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 			}
 		}
 		return env.Assign(node.Name.Value, val)
+	case *ast.ExternStatement:
+		return newError("extern functions need the native backend, run with --native or use unda build")
 	case *ast.StructStatement:
 		def := ctx.structs[node]
 		if def == nil {

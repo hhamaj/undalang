@@ -76,6 +76,73 @@ type gen struct {
 	defs     strings.Builder
 	builtins map[string]bool
 	structs  int
+	externs  int
+}
+
+var cTypeNames = map[string]string{
+	"i8": "int8_t", "i16": "int16_t", "i32": "int32_t", "i64": "int64_t",
+	"u8": "uint8_t", "u16": "uint16_t", "u32": "uint32_t", "u64": "uint64_t",
+	"f32": "float", "f64": "double", "bool": "bool", "cstring": "const char *",
+}
+
+// cArg is the conversion from an Unda value to a C argument of type t
+func cArg(t *ast.TypeAnnotation, v, fn string, i int) string {
+	name := cString(fn)
+	switch t.Name {
+	case "f32", "f64":
+		return fmt.Sprintf("(%s)u_ffi_float(%s, %s, %d)", cTypeNames[t.Name], v, name, i)
+	case "bool":
+		return fmt.Sprintf("u_ffi_bool(%s, %s, %d)", v, name, i)
+	case "cstring":
+		return fmt.Sprintf("u_ffi_cstring(%s, %s, %d)", v, name, i)
+	case "u64":
+		return fmt.Sprintf("u_ffi_uint(%s, %s, %d, UINT64_MAX, \"u64\")", v, name, i)
+	case "u8", "u16", "u32":
+		return fmt.Sprintf("(%s)u_ffi_uint(%s, %s, %d, UINT%s_MAX, %q)", cTypeNames[t.Name], v, name, i, t.Name[1:], t.Name)
+	}
+	return fmt.Sprintf("(%s)u_ffi_int(%s, %s, %d, INT%s_MIN, INT%s_MAX, %q)", cTypeNames[t.Name], v, name, i, t.Name[1:], t.Name[1:], t.Name)
+}
+
+// externFunc emits the C declaration of an extern function and a builtin
+// wrapper that converts the arguments and the result. the declaration uses
+// an asm label so it can't clash with whatever the runtime's headers declare
+// under the same name
+func (g *gen) externFunc(fn *ast.ExternFunc) string {
+	g.externs++
+	id := fmt.Sprintf("ufx_%d", g.externs)
+	ret := "void"
+	if fn.Return != nil {
+		ret = cTypeNames[fn.Return.Name]
+	}
+	params := make([]string, len(fn.Types))
+	args := make([]string, len(fn.Types))
+	for i, t := range fn.Types {
+		params[i] = cTypeNames[t.Name]
+		args[i] = cArg(t, fmt.Sprintf("argv[%d]", i), fn.Name.Value, i+1)
+	}
+	if len(params) == 0 {
+		params = []string{"void"}
+	}
+	fmt.Fprintf(&g.decls, "extern %s %s(%s) __asm__(%s);\n", ret, id, strings.Join(params, ", "), cString(fn.Name.Value))
+	call := fmt.Sprintf("%s(%s)", id, strings.Join(args, ", "))
+	var result string
+	switch {
+	case fn.Return == nil:
+		result = call + ";\n    return uv_nil();"
+	case fn.Return.Name == "f32" || fn.Return.Name == "f64":
+		result = "return uv_float((double)" + call + ");"
+	case fn.Return.Name == "bool":
+		result = "return uv_bool(" + call + ");"
+	case fn.Return.Name == "cstring":
+		result = "const char *r_ = " + call + ";\n    return r_ ? uv_cstr(r_) : uv_nil();"
+	case fn.Return.Name == "u64":
+		result = fmt.Sprintf("uint64_t r_ = %s;\n    if (r_ > INT64_MAX) u_panic(\"%%s returned %%llu, too big for an int\", %s, (unsigned long long)r_);\n    return uv_int((int64_t)r_);", call, cString(fn.Name.Value))
+	default:
+		result = "return uv_int((int64_t)" + call + ");"
+	}
+	fmt.Fprintf(&g.defs, "static UValue %s_call(UFrame *env_, int argc, UValue *argv) {\n    (void)env_; (void)argv;\n    U_ARGC(%s, %d);\n    %s\n}\n\n",
+		id, cString(fn.Name.Value), len(fn.Types), result)
+	return id + "_call"
 }
 
 func (g *gen) module(mod *semantic.Module) {
@@ -299,6 +366,11 @@ func (f *fgen) stmt(s ast.Statement) string {
 			f.checkType(v, lit.ReturnType, returnLabel(lit))
 		}
 		f.line("return %s;", v)
+		return "uv_nil()"
+	case *ast.ExternStatement:
+		for _, fn := range s.Funcs {
+			f.line("S[%d] = u_builtin(%s, %s);", f.mod.Bindings[fn.Name].Slot, f.g.externFunc(fn), cString(fn.Name.Value))
+		}
 		return "uv_nil()"
 	case *ast.StructStatement:
 		t := f.temp()

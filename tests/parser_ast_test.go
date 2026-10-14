@@ -173,10 +173,12 @@ func TestParserReportsOneErrorPerStatement(t *testing.T) {
 		"struct STRING { a }":     {"line 1:8 STRING is a builtin type name"},
 		"1 |> P(a: 2)":            {"line 1:12 named arguments can't follow |>, the piped value has no name"},
 		"f(1).x = 2":              {"line 1:6 can only assign to fields of a named value"},
-		"let x: integer = 1":      {`line 1:8 unknown type "integer" (did you mean "int"?)`},
-		"let x: strin = \"\"":     {`line 1:8 unknown type "strin" (did you mean "string"?)`},
-		"fn f(a: ) { a }":         {"line 1:9 expected next token to be IDENT, got ) instead"},
-		"fn f() -> { 1 }":         {"line 1:11 expected next token to be IDENT, got { instead"},
+		"extern \"m\" { fn cos(x: double) -> f64 }": {`line 1:24 unknown C type "double" (did you mean "f64"?)`},
+		"extern \"m\" { fn cos(x) }":                {"line 1:22 expected next token to be :, got ) instead"},
+		"let x: integer = 1":                        {`line 1:8 unknown type "integer" (did you mean "int"?)`},
+		"let x: strin = \"\"":                       {`line 1:8 unknown type "strin" (did you mean "string"?)`},
+		"fn f(a: ) { a }":                           {"line 1:9 expected next token to be IDENT, got ) instead"},
+		"fn f() -> { 1 }":                           {"line 1:11 expected next token to be IDENT, got { instead"},
 	}
 	for input, want := range tests {
 		p := parser.New(lexer.New(input + "\n"))

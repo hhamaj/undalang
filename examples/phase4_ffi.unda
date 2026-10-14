@@ -1,0 +1,24 @@
+// calling C. extern blocks declare functions from a C library with their C
+// types, after that they're called like any builtin. needs the native
+// backend: unda run --native examples/phase4_ffi.unda
+
+extern "m" {
+    fn sqrt(x: f64) -> f64
+    fn pow(base: f64, exp: f64) -> f64
+}
+
+extern "c" {
+    fn getpid() -> i32
+    fn strlen(s: cstring) -> u64
+    fn getenv(name: cstring) -> cstring
+}
+
+struct Point { x: number, y: number }
+
+fn dist(a: Point, b: Point) -> float {
+    sqrt(pow(a.x - b.x, 2) + pow(a.y - b.y, 2))
+}
+
+println("distance:", dist(Point(0, 0), Point(3, 4)))
+println("bytes in \"çay\":", strlen("çay"))
+println("has HOME:", getenv("HOME") != nil, "pid > 0:", getpid() > 0)

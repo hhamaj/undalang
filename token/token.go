@@ -70,6 +70,7 @@ const (
 	Break    = "BREAK"
 	Continue = "CONTINUE"
 	Struct   = "STRUCT"
+	Extern   = "EXTERN"
 )
 
 var keywords = map[string]Type{
@@ -91,6 +92,7 @@ var keywords = map[string]Type{
 	"break":    Break,
 	"continue": Continue,
 	"struct":   Struct,
+	"extern":   Extern,
 }
 
 func LookupIdent(ident string) Type {

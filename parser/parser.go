@@ -162,6 +162,8 @@ func (p *Parser) parseStatement() ast.Statement {
 		return p.parseAssignStatement()
 	case p.curTokenIs(token.Struct):
 		return p.parseStructStatement()
+	case p.curTokenIs(token.Extern):
+		return p.parseExternStatement()
 	default:
 		return p.parseExpressionOrFieldAssign()
 	}
@@ -356,6 +358,79 @@ func (p *Parser) parseStructStatement() ast.Statement {
 	}
 	p.nextToken()
 	return stmt
+}
+
+// parseExternStatement parses `extern "lib" { fn name(a: i32) -> f64 ... }`.
+// every parameter needs a C type, the return type is optional (void)
+func (p *Parser) parseExternStatement() ast.Statement {
+	stmt := &ast.ExternStatement{Token: p.curToken}
+	if !p.expectPeek(token.String) {
+		return nil
+	}
+	stmt.Library = &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
+	if !p.expectPeek(token.LBrace) {
+		return nil
+	}
+	for !p.peekTokenIs(token.RBrace) {
+		if !p.expectPeek(token.Function) || !p.expectPeek(token.Ident) {
+			return nil
+		}
+		fn := &ast.ExternFunc{Name: &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}}
+		if !p.expectPeek(token.LParen) {
+			return nil
+		}
+		for !p.peekTokenIs(token.RParen) {
+			if len(fn.Params) > 0 && !p.expectPeek(token.Comma) {
+				return nil
+			}
+			if !p.expectPeek(token.Ident) {
+				return nil
+			}
+			fn.Params = append(fn.Params, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+			if !p.expectPeek(token.Colon) {
+				return nil
+			}
+			typ := p.parseCType()
+			if typ == nil {
+				return nil
+			}
+			fn.Types = append(fn.Types, typ)
+		}
+		p.nextToken()
+		if p.peekTokenIs(token.Arrow) {
+			p.nextToken()
+			if fn.Return = p.parseCType(); fn.Return == nil {
+				return nil
+			}
+		}
+		stmt.Funcs = append(stmt.Funcs, fn)
+		if p.peekTokenIs(token.Semicolon) {
+			p.nextToken()
+		}
+	}
+	p.nextToken()
+	return stmt
+}
+
+func (p *Parser) parseCType() *ast.TypeAnnotation {
+	if !p.expectPeek(token.Ident) {
+		return nil
+	}
+	if !ast.CTypes[p.curToken.Literal] {
+		hint := ""
+		if c, ok := cTypeHints[p.curToken.Literal]; ok {
+			hint = fmt.Sprintf(" (did you mean %q?)", c)
+		}
+		p.errors = append(p.errors, p.atCur(fmt.Sprintf("unknown C type %q%s", p.curToken.Literal, hint)))
+		return nil
+	}
+	return &ast.TypeAnnotation{Token: p.curToken, Name: p.curToken.Literal}
+}
+
+// cTypeHints map C and Unda spellings to the extern type names
+var cTypeHints = map[string]string{
+	"int": "i32", "long": "i64", "short": "i16", "char": "i8", "double": "f64", "float": "f32",
+	"size_t": "u64", "string": "cstring", "str": "cstring", "int32": "i32", "int64": "i64",
 }
 
 // reservedTypeNames are the runtime's own type names. a struct can't take

@@ -1056,6 +1056,39 @@ static void u_file_error(const char *builtin, const char *op, UStr *path, int er
     u_failf("%s", sb.buf);
 }
 
+/*
+ * extern (C) calls. these turn Unda values into C arguments and refuse what
+ * doesn't fit instead of letting C truncate it
+ */
+
+static int64_t u_ffi_int(UValue v, const char *fn, int i, int64_t lo, int64_t hi, const char *ctype) {
+    if (v.tag != U_INT) u_panic("%s argument %d must be INTEGER, got %s", fn, i, u_type_name(v));
+    if (v.as.i < lo || v.as.i > hi) u_panic("%s argument %d is out of range for %s: %lld", fn, i, ctype, (long long)v.as.i);
+    return v.as.i;
+}
+
+static uint64_t u_ffi_uint(UValue v, const char *fn, int i, uint64_t hi, const char *ctype) {
+    if (v.tag != U_INT) u_panic("%s argument %d must be INTEGER, got %s", fn, i, u_type_name(v));
+    if (v.as.i < 0 || (uint64_t)v.as.i > hi) u_panic("%s argument %d is out of range for %s: %lld", fn, i, ctype, (long long)v.as.i);
+    return (uint64_t)v.as.i;
+}
+
+static double u_ffi_float(UValue v, const char *fn, int i) {
+    if (!u_is_num(v)) u_panic("%s argument %d must be number, got %s", fn, i, u_type_name(v));
+    return u_num(v);
+}
+
+static bool u_ffi_bool(UValue v, const char *fn, int i) {
+    if (v.tag != U_BOOL) u_panic("%s argument %d must be BOOLEAN, got %s", fn, i, u_type_name(v));
+    return v.as.b;
+}
+
+static const char *u_ffi_cstring(UValue v, const char *fn, int i) {
+    if (v.tag != U_STR) u_panic("%s argument %d must be STRING, got %s", fn, i, u_type_name(v));
+    if (memchr(v.as.s->data, 0, v.as.s->len)) u_panic("%s argument %d contains a NUL byte", fn, i);
+    return v.as.s->data;
+}
+
 /* global builtins */
 
 static void u_join_args(USb *sb, int argc, UValue *argv) {

@@ -186,6 +186,30 @@ fn dist2(a: Point, b: Point) -> number {
 
 Struct names start with an uppercase letter and work as types (`p: Point`). Structs are values: `r.x = 5` on a `let mut` binding gives `r` a copy with that field changed, and anything else holding the old value keeps it. The same works for string keys of maps (`cfg.db.port = 5432`). Two struct values are equal when they come from the same declaration and their fields are equal.
 
+## Calling C
+
+`extern` declares functions from a C library with their C types. After that they are called like any builtin:
+
+```unda
+extern "m" {
+    fn sqrt(x: f64) -> f64
+    fn pow(base: f64, exp: f64) -> f64
+}
+
+extern "./libgeo.so" {
+    fn area(w: i32, h: i32) -> i64
+    fn reset()
+}
+
+println(sqrt(pow(3, 2) + pow(4, 2)), area(3, 4))
+```
+
+The C types are `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`, `f64`, `bool` and `cstring` (a NUL-terminated `char *`; a NULL result comes back as `nil`). Leave out the return type for `void`. Arguments are converted when the call happens and must fit: an int that doesn't fit an `i32` or a negative int for a `u64` is a runtime error, not a silent truncation.
+
+The library is `"c"` for libc, a name like `"m"` or `"sqlite3"` to link `-lm` / `-lsqlite3`, or a path to a `.so` or `.a` file (relative to the source file). Shared libraries given by path are found again at runtime through an rpath.
+
+Extern functions only work in the native backend (`unda build`, `unda run --native`); the interpreter stops at the `extern` block with an error. Declaring a function with the wrong C signature is undefined behavior, same as in C.
+
 ## Loops
 
 `while` repeats while its condition is truthy. `for` iterates arrays (elements), maps (keys in sorted order) and strings (characters); with two names it also binds the index or key. `break` and `continue` work in both. Each iteration gets fresh bindings, so closures created in a loop capture that iteration's values.
@@ -268,3 +292,4 @@ Standard modules:
 - `examples/phase3_types.unda`: type annotations
 - `examples/phase3_results.unda`: `ok`/`err` results and `?`
 - `examples/phase4_structs.unda`: structs
+- `examples/phase4_ffi.unda`: calling C functions (native only)

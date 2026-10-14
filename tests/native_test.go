@@ -556,3 +556,86 @@ func compareBackends(t *testing.T, cc, path string) {
 		t.Fatalf("expected a runtime error, got exit %d stderr %q", interp.code, interp.stderr)
 	}
 }
+
+// extern functions only run natively, so this checks the output directly
+func TestNativeExtern(t *testing.T) {
+	cc := requireCC(t)
+	dir := t.TempDir()
+	lib := `#include <stdint.h>
+int64_t area(int32_t w, int32_t h) { return (int64_t)w * h; }
+const char *greet(int ok) { return ok ? "hello from C" : 0; }
+static int counter;
+void bump(void) { counter++; }
+int32_t count(void) { return counter; }
+uint64_t huge(void) { return UINT64_MAX; }
+`
+	if err := os.WriteFile(filepath.Join(dir, "geo.c"), []byte(lib), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(cc, "-shared", "-fPIC", "-o", filepath.Join(dir, "libgeo.so"), filepath.Join(dir, "geo.c")).CombinedOutput(); err != nil {
+		t.Fatalf("building test library: %v\n%s", err, out)
+	}
+	tests := []struct {
+		name, src, stdout, stderr string
+	}{
+		{"calls", `extern "m" { fn cos(x: f64) -> f64; fn pow(a: f64, b: f64) -> f64 }
+extern "c" {
+    fn labs(n: i64) -> i64
+    fn strlen(s: cstring) -> u64
+    fn getenv(name: cstring) -> cstring
+}
+extern "./libgeo.so" {
+    fn area(w: i32, h: i32) -> i64
+    fn greet(ok: i32) -> cstring
+    fn bump()
+    fn count() -> i32
+}
+println(cos(0), pow(2, 10), labs(-42), strlen("abc"), getenv("UNDA_NO_SUCH_VAR"))
+println(area(3, 4), greet(1), greet(0), bump(), count(), type(cos))
+`, "1 1024 42 3 nil\n12 hello from C nil nil 1 builtin\n", ""},
+		{"range", `extern "./libgeo.so" { fn area(w: i32, h: i32) -> i64 }
+fn big(n) { area(n, 1) }
+big(5000000000)`, "", "area argument 1 is out of range for i32: 5000000000"},
+		{"negative unsigned", `extern "c" { fn malloc(n: u64) -> u64 }
+fn m(n) { malloc(n) }
+m(-1)`, "", "malloc argument 1 is out of range for u64: -1"},
+		{"arg type", `extern "m" { fn cos(x: f64) -> f64 }
+fn c(v) { cos(v) }
+c("x")`, "", "cos argument 1 must be number, got STRING"},
+		{"nul byte", `import "json" as json
+extern "c" { fn strlen(s: cstring) -> u64 }
+fn l(v) { strlen(v) }
+l("a" + json.parse("\"\\u0000\""))`, "", "strlen argument 1 contains a NUL byte"},
+		{"u64 result", `extern "./libgeo.so" { fn huge() -> u64 }
+huge()`, "", "huge returned 18446744073709551615, too big for an int"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(dir, tt.name+".unda")
+			if err := os.WriteFile(path, []byte(tt.src), 0644); err != nil {
+				t.Fatal(err)
+			}
+			exe := filepath.Join(dir, tt.name)
+			if err := compiler.Build(path, compiler.Options{Output: exe, CC: cc}); err != nil {
+				var diagErr *compiler.DiagnosticsError
+				if errors.As(err, &diagErr) {
+					t.Fatalf("diagnostics: %v", diagErr.Program.Diagnostics)
+				}
+				t.Fatal(err)
+			}
+			var out, errOut bytes.Buffer
+			cmd := exec.Command(exe)
+			cmd.Stdout, cmd.Stderr = &out, &errOut
+			_ = cmd.Run()
+			if out.String() != tt.stdout || !strings.Contains(errOut.String(), tt.stderr) {
+				t.Fatalf("got stdout %q stderr %q", out.String(), errOut.String())
+			}
+		})
+	}
+
+	var out, errOut bytes.Buffer
+	path := filepath.Join(dir, "calls.unda")
+	if code := runner.RunFile(path, &out, &errOut); code == 0 || !strings.Contains(errOut.String(), "extern functions need the native backend") {
+		t.Fatalf("interpreter should refuse extern, got exit %d stderr %q", code, errOut.String())
+	}
+}
