@@ -718,8 +718,35 @@ func (p *Parser) parseTypeAnnotation() *ast.TypeAnnotation {
 		p.errors = append(p.errors, p.atCur(fmt.Sprintf("unknown type %q%s", p.curToken.Literal, hint)))
 		return nil
 	}
-	return &ast.TypeAnnotation{Token: p.curToken, Name: p.curToken.Literal}
+	typ := &ast.TypeAnnotation{Token: p.curToken, Name: p.curToken.Literal}
+	if want := elementTypeCount[typ.Name]; want > 0 && p.peekTokenIs(token.LBracket) {
+		p.nextToken()
+		for len(typ.Params) < want {
+			if len(typ.Params) > 0 && !p.expectPeek(token.Comma) {
+				return nil
+			}
+			param := p.parseTypeAnnotation()
+			if param == nil {
+				return nil
+			}
+			typ.Params = append(typ.Params, param)
+		}
+		if !p.expectPeek(token.RBracket) {
+			return nil
+		}
+		if typ.Name == "map" && !hashableTypes[typ.Params[0].Name] {
+			p.errors = append(p.errors, p.atCur(fmt.Sprintf("map keys can't be %s, use int, string, bool, nil or any", typ.Params[0])))
+			return nil
+		}
+	}
+	return typ
 }
+
+// elementTypeCount says how many element types a collection type takes in
+// brackets: array[int], map[string, int]
+var elementTypeCount = map[string]int{"array": 1, "map": 2}
+
+var hashableTypes = map[string]bool{"int": true, "string": true, "bool": true, "nil": true, "any": true}
 
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 	exp := &ast.CallExpression{Token: p.curToken, Function: function}

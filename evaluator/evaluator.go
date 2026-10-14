@@ -106,7 +106,7 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		if isAbrupt(val) {
 			return val
 		}
-		if node.Type != nil && !node.Type.Accepts(string(val.Type())) {
+		if node.Type != nil && !object.Fits(node.Type, val) {
 			return object.TypeMismatch(node.Name.Value+" expects", node.Type, val)
 		}
 		env.DefineTyped(node.Name.Value, val, node.Mutable, node.Type)
@@ -144,7 +144,7 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		if isAbrupt(val) {
 			return val
 		}
-		if fn := ctx.fn; fn != nil && fn.ReturnType != nil && !fn.ReturnType.Accepts(string(val.Type())) {
+		if fn := ctx.fn; fn != nil && fn.ReturnType != nil && !object.Fits(fn.ReturnType, val) {
 			return object.TypeMismatch(fn.ReturnLabel(), fn.ReturnType, val)
 		}
 		return &object.ReturnValue{Value: val}
@@ -922,7 +922,7 @@ func applyFunctionWithContext(fn object.Object, args []object.Object, ctx *Conte
 		}
 		extendedEnv := object.NewFunctionEnvironment(fn.Env, len(fn.Parameters))
 		for paramIdx, param := range fn.Parameters {
-			if typ := paramType(fn, paramIdx); typ != nil && !typ.Accepts(string(args[paramIdx].Type())) {
+			if typ := paramType(fn, paramIdx); typ != nil && !object.Fits(typ, args[paramIdx]) {
 				return object.TypeMismatch("parameter "+param.Value+" expects", typ, args[paramIdx])
 			}
 			extendedEnv.Define(param.Value, args[paramIdx], false)
@@ -967,7 +967,7 @@ func paramType(fn *object.Function, i int) *ast.TypeAnnotation {
 // with. the error points at the body's last statement since that's where the
 // value came from
 func checkImplicitReturn(fn *object.Function, result object.Object, file string) object.Object {
-	if fn.ReturnType == nil || isAbrupt(result) || fn.ReturnType.Accepts(string(result.Type())) {
+	if fn.ReturnType == nil || isAbrupt(result) || object.Fits(fn.ReturnType, result) {
 		return result
 	}
 	err := object.TypeMismatch(fn.ReturnLabel(), fn.ReturnType, result)

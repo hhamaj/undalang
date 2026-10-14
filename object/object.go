@@ -279,7 +279,7 @@ func (d *StructDef) NoField(name string) *Error {
 
 // CheckField returns an error when v doesn't fit field i's type
 func (d *StructDef) CheckField(i int, v Object) *Error {
-	if t := d.Types[i]; t != nil && !t.Accepts(string(v.Type())) {
+	if t := d.Types[i]; t != nil && !Fits(t, v) {
 		return TypeMismatch("field "+d.Fields[i]+" of "+d.Name+" expects", t, v)
 	}
 	return nil
@@ -333,4 +333,51 @@ func (s *Struct) Inspect() string {
 		parts[i] = s.Def.Fields[i] + ": " + v.Inspect()
 	}
 	return s.Def.Name + "(" + strings.Join(parts, ", ") + ")"
+}
+
+// Fits reports whether v fits t, down to the elements of typed arrays and
+// maps. ast.TypeAnnotation.Accepts only looks at the outer type
+func Fits(t *ast.TypeAnnotation, v Object) bool {
+	bad, _ := misfit(t, v)
+	return !bad
+}
+
+// misfit finds why v doesn't fit t. the detail names the first element that
+// doesn't, map entries are walked in key order like maps.keys so both
+// backends name the same one
+func misfit(t *ast.TypeAnnotation, v Object) (bool, string) {
+	if !t.Accepts(string(v.Type())) {
+		return true, ""
+	}
+	switch {
+	case t.Name == "array" && len(t.Params) == 1:
+		for i, el := range v.(*Array).Elements {
+			if bad, d := misfit(t.Params[0], el); bad {
+				return true, fmt.Sprintf(" (element %d is %s%s)", i, el.Type(), d)
+			}
+		}
+	case t.Name == "map" && len(t.Params) == 2:
+		m := v.(*Map)
+		pairs := make([]MapPair, 0, len(m.Pairs))
+		for _, p := range m.Pairs {
+			pairs = append(pairs, p)
+		}
+		sort.Slice(pairs, func(i, j int) bool { return pairs[i].Key.Inspect() < pairs[j].Key.Inspect() })
+		for _, p := range pairs {
+			if bad, d := misfit(t.Params[0], p.Key); bad {
+				return true, fmt.Sprintf(" (key %s is %s%s)", keyText(p.Key), p.Key.Type(), d)
+			}
+			if bad, d := misfit(t.Params[1], p.Value); bad {
+				return true, fmt.Sprintf(" (value at key %s is %s%s)", keyText(p.Key), p.Value.Type(), d)
+			}
+		}
+	}
+	return false, ""
+}
+
+func keyText(k Object) string {
+	if s, ok := k.(*String); ok {
+		return `"` + s.Value + `"`
+	}
+	return k.Inspect()
 }

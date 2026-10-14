@@ -37,7 +37,7 @@ func GenerateC(prog *semantic.Program) (string, error) {
 	if prog.HasErrors() || prog.Main == nil {
 		return "", fmt.Errorf("cannot generate C for a program with errors")
 	}
-	g := &gen{prog: prog, builtins: map[string]bool{}}
+	g := &gen{prog: prog, builtins: map[string]bool{}, types: map[string]string{}}
 	for _, mod := range prog.Modules {
 		g.module(mod)
 	}
@@ -77,6 +77,8 @@ type gen struct {
 	builtins map[string]bool
 	structs  int
 	externs  int
+	// types holds the UType each annotation was emitted as, by its text
+	types map[string]string
 }
 
 var cTypeNames = map[string]string{
@@ -260,32 +262,42 @@ func (f *fgen) loc(node ast.Node) {
 // checkType emits the runtime check for an annotation. it uses whatever
 // location is current, callers set it first when they need a different one
 func (f *fgen) checkType(v string, t *ast.TypeAnnotation, what string) {
-	switch {
-	case t.Name == "any":
-	case t.IsStruct():
-		f.line("u_check_struct(%s, %s, %s);", v, cString(t.Name), cString(what+" "+t.Name))
-	default:
-		f.line("u_check_type(%s, %s, %s);", v, typeMask(t), cString(what+" "+t.Name))
+	if t.Name == "any" {
+		return
 	}
+	f.line("u_check(%s, &%s, %s);", v, f.g.typeDesc(t), cString(what+" "+t.String()))
 }
 
-func typeMask(t *ast.TypeAnnotation) string {
-	tags := make([]string, 0, len(ast.TypeNames[t.Name]))
-	for _, name := range ast.TypeNames[t.Name] {
-		tags = append(tags, "(1u << "+tagNames[name]+")")
+// typeDesc emits the static UType for an annotation once and returns its
+// name. element types come first since the outer one points at them
+func (g *gen) typeDesc(t *ast.TypeAnnotation) string {
+	key := t.String()
+	if name, ok := g.types[key]; ok {
+		return name
 	}
-	return strings.Join(tags, " | ")
-}
-
-// annotC renders an annotation as a UAnnot initializer
-func annotC(t *ast.TypeAnnotation) string {
+	elem, k := "NULL", "NULL"
 	switch {
-	case t == nil || t.Name == "any":
-		return "{0, NULL, NULL}"
-	case t.IsStruct():
-		return fmt.Sprintf("{0, %s, %s}", cString(t.Name), cString(t.Name))
+	case t.Name == "array" && len(t.Params) == 1:
+		elem = "&" + g.typeDesc(t.Params[0])
+	case t.Name == "map" && len(t.Params) == 2:
+		k = "&" + g.typeDesc(t.Params[0])
+		elem = "&" + g.typeDesc(t.Params[1])
 	}
-	return fmt.Sprintf("{%s, NULL, %s}", typeMask(t), cString(t.Name))
+	name := fmt.Sprintf("ut_%d", len(g.types)+1)
+	g.types[key] = name
+	mask, sname := "~0u", "NULL"
+	switch {
+	case t.IsStruct():
+		mask, sname = "0", cString(t.Name)
+	case t.Name != "any":
+		tags := make([]string, 0, len(ast.TypeNames[t.Name]))
+		for _, n := range ast.TypeNames[t.Name] {
+			tags = append(tags, "(1u << "+tagNames[n]+")")
+		}
+		mask = strings.Join(tags, " | ")
+	}
+	fmt.Fprintf(&g.decls, "static const UType %s = {%s, %s, %s, %s};\n", name, mask, sname, elem, k)
+	return name
 }
 
 // structDef emits the static definition for a struct statement and returns
@@ -295,16 +307,21 @@ func (g *gen) structDef(s *ast.StructStatement) string {
 	name := fmt.Sprintf("sdef_%d", g.structs)
 	fields := make([]string, len(s.Fields))
 	types := make([]string, len(s.Fields))
+	tnames := make([]string, len(s.Fields))
 	for i, f := range s.Fields {
 		fields[i] = cString(f.Value)
-		types[i] = annotC(s.Types[i])
+		types[i], tnames[i] = "NULL", "NULL"
+		if t := s.Types[i]; t != nil && t.Name != "any" {
+			types[i], tnames[i] = "&"+g.typeDesc(t), cString(t.String())
+		}
 	}
 	if len(fields) == 0 {
-		fields, types = []string{"NULL"}, []string{"{0, NULL, NULL}"}
+		fields, types, tnames = []string{"NULL"}, []string{"NULL"}, []string{"NULL"}
 	}
 	fmt.Fprintf(&g.decls, "static const char *%s_fields[] = {%s};\n", name, strings.Join(fields, ", "))
-	fmt.Fprintf(&g.decls, "static const UAnnot %s_types[] = {%s};\n", name, strings.Join(types, ", "))
-	fmt.Fprintf(&g.decls, "static UStructDef %s = {%s, %d, %s_fields, %s_types};\n", name, cString(s.Name.Value), len(s.Fields), name, name)
+	fmt.Fprintf(&g.decls, "static const UType *const %s_types[] = {%s};\n", name, strings.Join(types, ", "))
+	fmt.Fprintf(&g.decls, "static const char *%s_tnames[] = {%s};\n", name, strings.Join(tnames, ", "))
+	fmt.Fprintf(&g.decls, "static UStructDef %s = {%s, %d, %s_fields, %s_types, %s_tnames};\n", name, cString(s.Name.Value), len(s.Fields), name, name, name)
 	return name
 }
 

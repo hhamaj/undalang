@@ -338,7 +338,7 @@ func (c *checker) function(p pending) {
 		if n := len(lit.Body.Statements); n > 0 {
 			at = lit.Body.Statements[n-1]
 		}
-		c.errorf(at, "type mismatch: %s %s, got %s", returnLabel(lit), lit.ReturnType.Name, t.Name())
+		c.errorf(at, "type mismatch: %s %s, got %s", returnLabel(lit), lit.ReturnType, t.Name())
 	}
 	c.fn = nil
 	c.loops = outerLoops
@@ -363,8 +363,18 @@ func returnLabel(lit *ast.FunctionLiteral) string {
 // annotType is what a value of an annotated type is known to be
 func (c *checker) annotType(a *ast.TypeAnnotation) Type {
 	t := kindType(AnnotationKind(a))
-	if a != nil && a.IsStruct() {
+	if a == nil {
+		return t
+	}
+	if a.IsStruct() {
 		t.Struct = c.lookupStruct(a.Name)
+	}
+	switch {
+	case a.Name == "array" && len(a.Params) == 1:
+		t.Elem = typePtr(c.annotType(a.Params[0]))
+	case a.Name == "map" && len(a.Params) == 2:
+		t.Key = typePtr(c.annotType(a.Params[0]))
+		t.Elem = typePtr(c.annotType(a.Params[1]))
 	}
 	return t
 }
@@ -374,6 +384,12 @@ func (c *checker) annotType(a *ast.TypeAnnotation) Type {
 func (c *checker) narrow(t Type, a *ast.TypeAnnotation) Type {
 	k := AnnotationKind(a)
 	if t.Kind&k == t.Kind {
+		if len(a.Params) > 0 && t.Elem == nil {
+			// the runtime check covers the elements too
+			out := c.annotType(a)
+			out.Kind = t.Kind
+			return out
+		}
 		return t
 	}
 	out := kindType(t.Kind & k)
@@ -392,7 +408,13 @@ func (c *checker) lookupStruct(name string) *ast.StructStatement {
 
 // checkAnnot reports struct types nobody declared
 func (c *checker) checkAnnot(a *ast.TypeAnnotation) {
-	if a == nil || !a.IsStruct() || len(c.a.structs[a.Name]) > 0 {
+	if a == nil {
+		return
+	}
+	for _, p := range a.Params {
+		c.checkAnnot(p)
+	}
+	if !a.IsStruct() || len(c.a.structs[a.Name]) > 0 {
 		return
 	}
 	c.errorf(a, "unknown type %s%s", a.Name, diag.DidYouMean(a.Name, sortedKeys(c.a.structs)))
@@ -469,7 +491,7 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 		t := c.expr(s.Value, sc)
 		c.checkAnnot(s.Type)
 		if !fits(t, s.Type) {
-			c.errorf(s, "type mismatch: %s expects %s, got %s", s.Name.Value, s.Type.Name, t.Name())
+			c.errorf(s, "type mismatch: %s expects %s, got %s", s.Name.Value, s.Type, t.Name())
 		}
 		// a redeclared name shares its slot with the old one, and the native
 		// backend checks assignments per slot, so both have to agree on the type
@@ -489,7 +511,7 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 	case *ast.ReturnStatement:
 		t := c.expr(s.ReturnValue, sc)
 		if c.fn != nil && !fits(t, c.fn.ReturnType) {
-			c.errorf(s, "type mismatch: %s %s, got %s", returnLabel(c.fn), c.fn.ReturnType.Name, t.Name())
+			c.errorf(s, "type mismatch: %s %s, got %s", returnLabel(c.fn), c.fn.ReturnType, t.Name())
 		}
 		return kindType(KNever)
 	case *ast.ExternStatement:
@@ -533,11 +555,12 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 			c.errorf(s, "cannot iterate over %s", t.Kind)
 		}
 		vars := c.loopScope(s, s.Body, sc)
-		for _, v := range s.Vars {
+		bound := loopVarTypes(t, len(s.Vars))
+		for i, v := range s.Vars {
 			if _, dup := vars.names[v.Value]; dup {
 				c.errorf(v, "duplicate loop variable %s", v.Value)
 			}
-			c.mod.Bindings[v] = c.declare(vars, v.Value, false, unknown(), nil)
+			c.mod.Bindings[v] = c.declare(vars, v.Value, false, bound[i], nil)
 		}
 		c.loops++
 		c.block(s.Body, newScope(vars, vars.fn))
@@ -557,6 +580,30 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 		return c.block(s, newScope(sc, sc.fn))
 	}
 	return unknown()
+}
+
+// loopVarTypes is what a for loop over a value of type t binds, see
+// evaluator.IterationItems
+func loopVarTypes(t Type, vars int) []Type {
+	out := []Type{unknown(), unknown()}
+	switch {
+	case t.Kind == KString:
+		out[0], out[1] = kindType(KString), kindType(KString)
+		if vars == 2 {
+			out[0] = kindType(KInt)
+		}
+	case t.Kind == KArray && t.Elem != nil:
+		out[0], out[1] = *t.Elem, *t.Elem
+		if vars == 2 {
+			out[0] = kindType(KInt)
+		}
+	case t.Kind == KMap && t.Elem != nil:
+		out[1] = *t.Elem
+		if t.Key != nil {
+			out[0] = *t.Key
+		}
+	}
+	return out
 }
 
 // loopScope returns the scope a loop body's bindings live in. if the body
@@ -596,7 +643,7 @@ func (c *checker) assign(s *ast.AssignStatement, sc *scope, t Type) {
 			c.fieldAssign(s, cands[0].Sym.Type, t)
 		}
 	} else if cands[0].Direct && !fits(t, cands[0].Sym.Annot) {
-		c.errorf(s, "type mismatch: %s expects %s, got %s", name, cands[0].Sym.Annot.Name, t.Name())
+		c.errorf(s, "type mismatch: %s expects %s, got %s", name, cands[0].Sym.Annot, t.Name())
 	}
 	c.mod.Assigns[s] = &Ref{Name: name, Candidates: cands}
 }
@@ -618,7 +665,7 @@ func (c *checker) fieldAssign(s *ast.AssignStatement, cur, v Type) {
 			return
 		}
 		if i == len(s.Fields)-1 && !fits(v, decl.Types[idx]) {
-			c.errorf(s, "type mismatch: field %s of %s expects %s, got %s", f.Value, decl.Name.Value, decl.Types[idx].Name, v.Name())
+			c.errorf(s, "type mismatch: field %s of %s expects %s, got %s", f.Value, decl.Name.Value, decl.Types[idx], v.Name())
 		}
 		cur = c.annotType(decl.Types[idx])
 	}
@@ -717,7 +764,7 @@ func (c *checker) construct(node ast.Node, decl *ast.StructStatement, args []Typ
 	}
 	for i, g := range given {
 		if !fits(*g, decl.Types[i]) {
-			c.errorf(node, "type mismatch: field %s of %s expects %s, got %s", decl.Fields[i].Value, decl.Name.Value, decl.Types[i].Name, g.Name())
+			c.errorf(node, "type mismatch: field %s of %s expects %s, got %s", decl.Fields[i].Value, decl.Name.Value, decl.Types[i], g.Name())
 			break
 		}
 	}
@@ -841,17 +888,30 @@ func (c *checker) expr(e ast.Expression, sc *scope) Type {
 		c.queue = append(c.queue, pending{fn: fn, scope: sc})
 		return Type{Kind: KFunction, Arity: len(e.Parameters), Func: e}
 	case *ast.ArrayLiteral:
-		c.exprs(e.Elements, sc)
-		return kindType(KArray)
+		out := kindType(KArray)
+		if elems := c.exprs(e.Elements, sc); len(elems) > 0 {
+			el := kindType(KNever)
+			for _, t := range elems {
+				el = join(el, t)
+			}
+			out.Elem = &el
+		}
+		return out
 	case *ast.MapLiteral:
+		out := kindType(KMap)
+		key, val := kindType(KNever), kindType(KNever)
 		for _, pair := range e.Pairs {
 			k := c.expr(pair.Key, sc)
 			if k.Kind.Known() && k.Kind&KHash == 0 {
 				c.errorf(e, "unusable as map key: %s", k.Kind)
 			}
-			c.expr(pair.Value, sc)
+			key = join(key, k)
+			val = join(val, c.expr(pair.Value, sc))
 		}
-		return kindType(KMap)
+		if len(e.Pairs) > 0 {
+			out.Key, out.Elem = &key, &val
+		}
+		return out
 	case *ast.IndexExpression:
 		return c.index(e, c.expr(e.Left, sc), c.expr(e.Index, sc))
 	case *ast.MemberExpression:
@@ -883,7 +943,7 @@ func (c *checker) expr(e ast.Expression, sc *scope) Type {
 			c.errorf(e, "? expects RESULT, got %s", t.Name())
 		}
 		if c.fn != nil && c.fn.ReturnType != nil && AnnotationKind(c.fn.ReturnType)&KResult == 0 {
-			c.errorf(e, "type mismatch: %s %s, got RESULT", returnLabel(c.fn), c.fn.ReturnType.Name)
+			c.errorf(e, "type mismatch: %s %s, got RESULT", returnLabel(c.fn), c.fn.ReturnType)
 		}
 		return unknown()
 	}
@@ -986,7 +1046,7 @@ func (c *checker) call(node ast.Node, callee Type, args []Type) Type {
 		}
 		for i, arg := range args {
 			if a := paramAnnot(lit, i); !fits(arg, a) {
-				c.errorf(node, "type mismatch: parameter %s expects %s, got %s", lit.Parameters[i].Value, a.Name, arg.Name())
+				c.errorf(node, "type mismatch: parameter %s expects %s, got %s", lit.Parameters[i].Value, a, arg.Name())
 				break
 			}
 		}
@@ -1030,10 +1090,12 @@ func (c *checker) index(e *ast.IndexExpression, left, idx Type) Type {
 		if idx.Kind.Known() && idx.Kind != KInt {
 			c.errorf(e, "index operator not supported: ARRAY[%s]", idx.Kind)
 		}
+		return elemOf(left)
 	case KMap:
 		if idx.Kind.Known() && idx.Kind&KHash == 0 {
 			c.errorf(e, "unusable as map key: %s", idx.Kind)
 		}
+		return elemOf(left)
 	case KString:
 		if idx.Kind.Known() && idx.Kind != KInt {
 			c.errorf(e, "index operator not supported: STRING[%s]", idx.Kind)
@@ -1066,7 +1128,7 @@ func (c *checker) member(e *ast.MemberExpression, obj Type) Type {
 		return unknown()
 	}
 	if obj.Kind == KMap {
-		return unknown()
+		return elemOf(obj)
 	}
 	if obj.Kind != KModule {
 		c.errorf(e, "member access expects module, map or struct, got %s", obj.Kind)

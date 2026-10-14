@@ -413,10 +413,22 @@ type FunctionLiteral struct {
 type TypeAnnotation struct {
 	Token token.Token
 	Name  string
+	// Params are element types: one for array[int], key and value for
+	// map[string, int]. nil when the collection takes anything
+	Params []*TypeAnnotation
 }
 
 func (ta *TypeAnnotation) TokenLiteral() string { return ta.Token.Literal }
-func (ta *TypeAnnotation) String() string       { return ta.Name }
+func (ta *TypeAnnotation) String() string {
+	if len(ta.Params) == 0 {
+		return ta.Name
+	}
+	params := make([]string, len(ta.Params))
+	for i, p := range ta.Params {
+		params[i] = p.String()
+	}
+	return ta.Name + "[" + strings.Join(params, ", ") + "]"
+}
 
 // TypeNames maps every type you can write to the runtime type names it
 // accepts. the checker and both backends build their own tables from this

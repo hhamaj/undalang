@@ -42,13 +42,17 @@ typedef struct UValue {
 } UValue;
 
 /*
- * a type annotation as the runtime checks it. a struct type has sname set and
- * mask 0, tname is how the annotation was written, NULL means no check
+ * a type annotation as the runtime checks it, emitted by the compiler. mask
+ * has a bit per tag the value may have, a struct type sets sname instead.
+ * elem and key check the insides of typed arrays and maps
  */
-typedef struct { unsigned mask; const char *sname; const char *tname; } UAnnot;
+typedef struct UType { unsigned mask; const char *sname; const struct UType *elem, *key; } UType;
 
-/* struct definitions are static data emitted by the compiler */
-struct UStructDef { const char *name; int n; const char **fields; const UAnnot *types; };
+/*
+ * struct definitions are static data emitted by the compiler. a field without
+ * a type has a NULL types entry, tnames spell the types for messages
+ */
+struct UStructDef { const char *name; int n; const char **fields; const UType *const *types; const char **tnames; };
 struct UStruct { UStructDef *def; UValue fields[]; };
 
 struct URes { bool ok; UValue v; };
@@ -852,15 +856,72 @@ static int u_field_index(const UStructDef *d, const char *name) {
     return -1;
 }
 
-static bool u_annot_accepts(const UAnnot *a, UValue v) {
-    if (!a->tname) return true;
-    if (a->sname) return v.tag == U_STRUCT && !strcmp(v.as.st->def->name, a->sname);
-    return (a->mask & (1u << v.tag)) != 0;
+static size_t *u_sorted_entries(UMap *m);
+
+static bool u_fits(const UType *t, UValue v) {
+    if (t->sname) return v.tag == U_STRUCT && !strcmp(v.as.st->def->name, t->sname);
+    if (!(t->mask & (1u << v.tag))) return false;
+    if (t->elem && v.tag == U_ARR) {
+        for (size_t i = 0; i < v.as.a->len; i++)
+            if (!u_fits(t->elem, v.as.a->items[i])) return false;
+    }
+    if (t->elem && v.tag == U_MAP) {
+        for (size_t i = 0; i < v.as.m->len; i++)
+            if (!u_fits(t->key, v.as.m->entries[i].key) || !u_fits(t->elem, v.as.m->entries[i].value)) return false;
+    }
+    return true;
+}
+
+static void u_key_text(USb *sb, UValue k) {
+    if (k.tag == U_STR) { sb_putc(sb, '"'); sb_putn(sb, k.as.s->data, k.as.s->len); sb_putc(sb, '"'); }
+    else u_inspect_to(sb, k);
+}
+
+/* appends why v doesn't fit t, the same words object.misfit uses */
+static void u_misfit(USb *sb, const UType *t, UValue v) {
+    if (!t->elem || (v.tag != U_ARR && v.tag != U_MAP) || t->sname || !(t->mask & (1u << v.tag))) return;
+    if (v.tag == U_ARR) {
+        for (size_t i = 0; i < v.as.a->len; i++) {
+            UValue el = v.as.a->items[i];
+            if (u_fits(t->elem, el)) continue;
+            sb_printf(sb, " (element %zu is %s", i, u_type_name(el));
+            u_misfit(sb, t->elem, el);
+            sb_putc(sb, ')');
+            return;
+        }
+        return;
+    }
+    UMap *m = v.as.m;
+    size_t *idx = u_sorted_entries(m);
+    for (size_t j = 0; j < m->len; j++) {
+        UEntry *e = &m->entries[idx[j]];
+        const UType *part = NULL;
+        UValue bad;
+        if (!u_fits(t->key, e->key)) { part = t->key; bad = e->key; sb_puts(sb, " (key "); }
+        else if (!u_fits(t->elem, e->value)) { part = t->elem; bad = e->value; sb_puts(sb, " (value at key "); }
+        else continue;
+        u_key_text(sb, e->key);
+        sb_printf(sb, " is %s", u_type_name(bad));
+        u_misfit(sb, part, bad);
+        sb_putc(sb, ')');
+        break;
+    }
+    free(idx);
+}
+
+/* panics unless v fits t. what is like "x expects array[int]" */
+static void u_check(UValue v, const UType *t, const char *what) {
+    if (u_fits(t, v)) return;
+    USb detail = {0};
+    u_misfit(&detail, t, v);
+    u_panic("type mismatch: %s, got %s%s", what, u_type_name(v), detail.buf ? detail.buf : "");
 }
 
 static void u_check_field(const UStructDef *d, int i, UValue v) {
-    if (!u_annot_accepts(&d->types[i], v))
-        u_panic("type mismatch: field %s of %s expects %s, got %s", d->fields[i], d->name, d->types[i].tname, u_type_name(v));
+    if (!d->types[i] || u_fits(d->types[i], v)) return;
+    USb detail = {0};
+    u_misfit(&detail, d->types[i], v);
+    u_panic("type mismatch: field %s of %s expects %s, got %s%s", d->fields[i], d->name, d->tnames[i], u_type_name(v), detail.buf ? detail.buf : "");
 }
 
 /* mirrors object.StructDef.New, same checks in the same order */
@@ -965,15 +1026,6 @@ static void u_unhandled(UValue v) {
 static UValue u_call_named(UValue f, int argc, UValue *argv, const char **names) {
     if (f.tag != U_SDEF) u_panic("named arguments only work with struct constructors, got %s", u_type_name(f));
     return u_struct_new(f.as.sd, argc, argv, names);
-}
-
-static void u_check_struct(UValue v, const char *sname, const char *what) {
-    if (v.tag != U_STRUCT || strcmp(v.as.st->def->name, sname)) u_panic("type mismatch: %s, got %s", what, u_type_name(v));
-}
-
-/* panics unless v's tag is in mask. what is like "x expects int" */
-static void u_check_type(UValue v, unsigned mask, const char *what) {
-    if (!(mask & (1u << v.tag))) u_panic("type mismatch: %s, got %s", what, u_type_name(v));
 }
 
 /* builtin helpers */

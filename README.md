@@ -113,6 +113,12 @@ let label = fn(name: string, value) -> string { name + ": " + type(value) }
 
 The types are `int`, `float`, `number` (int or float), `string`, `bool`, `nil`, `array`, `map`, `fn` (functions and builtins), `module`, `result`, `ptr`, `any` and the name of any struct.
 
+Arrays and maps can say what they hold: `array[int]`, `map[string, int]`, `array[Point]`, `map[string, array[float]]`. Map keys can be `int`, `string`, `bool`, `nil` or `any`. Checking one of these at runtime looks at every element, so it costs time proportional to the collection; a mismatch names the first offender:
+
+```text
+runtime error: main.unda:4:1: type mismatch: scores expects map[string, int], got MAP (value at key "bob" is STRING)
+```
+
 `unda check` reports mismatches it can prove without running the program, and typed bindings and parameters give it more to work with:
 
 ```text

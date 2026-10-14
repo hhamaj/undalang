@@ -83,7 +83,30 @@ type Type struct {
 	// Struct is the declaration behind a KStruct value or a KStructDef
 	// constructor, when it's known
 	Struct *ast.StructStatement
+	// Elem is what an array holds or a map maps to, Key what a map is keyed
+	// by, when that's known
+	Elem, Key *Type
 }
+
+// sameType compares what two types know, deeply
+func sameType(a, b *Type) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Kind == b.Kind && a.Arity == b.Arity && a.Builtin == b.Builtin && a.Module == b.Module &&
+		a.Func == b.Func && a.Struct == b.Struct && sameType(a.Elem, b.Elem) && sameType(a.Key, b.Key)
+}
+
+// elemOf returns what indexing a collection of type t can give, nil included
+// since a missing index or key reads as nil
+func elemOf(t Type) Type {
+	if t.Elem == nil {
+		return unknown()
+	}
+	return join(*t.Elem, kindType(KNil))
+}
+
+func typePtr(t Type) *Type { return &t }
 
 // Name spells the type the way the runtime does, so a struct value is its
 // struct's name
@@ -123,7 +146,18 @@ func fits(t Type, a *ast.TypeAnnotation) bool {
 	if a.IsStruct() && t.Kind == KStruct && t.Struct != nil {
 		return t.Struct.Name.Value == a.Name
 	}
-	return t.Kind&AnnotationKind(a) != 0
+	if t.Kind&AnnotationKind(a) == 0 {
+		return false
+	}
+	// element types only prove a mismatch when the value is surely that
+	// collection, an array|nil could still be nil
+	switch {
+	case a.Name == "array" && len(a.Params) == 1 && t.Kind == KArray && t.Elem != nil:
+		return fits(*t.Elem, a.Params[0])
+	case a.Name == "map" && len(a.Params) == 2 && t.Kind == KMap && t.Elem != nil:
+		return (t.Key == nil || fits(*t.Key, a.Params[0])) && fits(*t.Elem, a.Params[1])
+	}
+	return true
 }
 
 // ModuleType lists the module members known at compile time
@@ -144,10 +178,20 @@ func join(a, b Type) Type {
 	if b.Kind == KNever {
 		return a
 	}
-	if a.Kind == b.Kind && a.Arity == b.Arity && a.Builtin == b.Builtin && a.Module == b.Module && a.Func == b.Func && a.Struct == b.Struct {
+	if sameType(&a, &b) {
 		return a
 	}
-	return kindType(a.Kind | b.Kind)
+	out := kindType(a.Kind | b.Kind)
+	if a.Kind == b.Kind && (a.Kind == KArray || a.Kind == KMap) && a.Elem != nil && b.Elem != nil {
+		// two arrays of different element types are still an array of either
+		e := join(*a.Elem, *b.Elem)
+		out.Elem = &e
+		if a.Key != nil && b.Key != nil {
+			k := join(*a.Key, *b.Key)
+			out.Key = &k
+		}
+	}
+	return out
 }
 
 // Signature describes a builtin function for arity and argument checks

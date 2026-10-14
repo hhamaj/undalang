@@ -389,17 +389,40 @@ println(any_v, exact(p), exact(Point(0, 0)))
 	"err_struct_typed":     "struct P { a }\nstruct Q { a }\nfn f(p: P) { p }\nfn call(v) { f(v) }\ncall(Q(1))",
 	"err_struct_json":      "import \"json\" as json\nstruct P { a }\njson.stringify(P(1))",
 	"err_struct_add":       "struct P { a }\nfn add(v) { v + 1 }\nadd(P(1))",
-	"err_unhandled":        "fn f() { err(\"boom\") }\nprintln(\"before\")\nlet v = f()?",
-	"err_try_type":         "fn f(v) { v? }\nf(5)",
-	"err_json_result":      "import \"json\" as json\njson.stringify([ok(1)])",
-	"err_typed_let":        "fn g() { \"s\" }\nlet x: int = g()",
-	"err_typed_assign":     "let mut n: int = 1\nfn set(v) { n = v }\nset(2)\nprintln(n)\nset(\"s\")",
-	"err_typed_param":      "fn f(a: int) { a }\nfn call(v) { f(v) }\ncall(\"s\")",
-	"err_typed_callback":   "import \"arrays\" as arrays\narrays.map([1, \"x\"], fn(v: int) { let w = v\nw })",
-	"err_typed_return":     "fn f(v) -> int {\n    if v { return v }\n    0\n}\nprintln(f(nil))\nf(\"s\")",
-	"err_typed_implicit":   "fn f(v) -> string {\n    let x = v\n    x\n}\nf(1)",
-	"err_typed_no_else":    "fn f(v) -> int {\n    if v { 1 }\n}\nprintln(f(true))\nf(false)",
-	"err_typed_pipeline":   "fn up(s: string) { s }\nfn run(v) { v |> up }\nrun(1)",
+	"element_types": `struct P { x: int }
+let xs: array[int] = [1, 2, 3]
+let m: map[string, array[int]] = {"a": xs, "b": []}
+let ps: array[P] = [P(1), P(2)]
+fn total(v: array[number]) -> number { let mut s = 0
+for x in v { s = s + x }
+s }
+struct Bag { items: array[string] }
+let mut bag = Bag([])
+bag.items = ["x", "y"]
+println(total(xs), total([1.5, 2]), m, ps, bag, total([]))
+let nested: array[array[int]] = [[1], [], [2, 3]]
+let anything: map[any, any] = {1: "a", "b": [2]}
+println(nested, anything)
+`,
+	"err_elem_array":     "fn f(v) { let xs: array[int] = v\nxs }\nprintln(f([1, 2]))\nf([1, \"a\", nil])",
+	"err_elem_nested":    "fn f(v: array[array[int]]) { v }\nfn call(v) { f(v) }\ncall([[1], [2, 3.5]])",
+	"err_elem_map_value": "fn f(v: map[string, int]) { v }\nfn call(v) { f(v) }\ncall({\"z\": \"s\", \"a\": 1, \"b\": true})",
+	"err_elem_map_key":   "fn f(v: map[string, int]) { v }\nfn call(v) { f(v) }\ncall({\"a\": 1, 2: 2})",
+	"err_elem_return":    "fn f(v) -> array[string] { v }\nf([\"a\", 1])",
+	"err_elem_struct":    "struct P { a }\nstruct Q { a }\nfn f(v) { let ps: array[P] = v\nps }\nf([P(1), Q(2)])",
+	"err_elem_field":     "struct Bag { items: array[string] }\nfn mk(v) { Bag(v) }\nprintln(mk([]))\nmk([1])",
+	"err_elem_assign":    "let mut xs: array[int] = []\nfn set(v) { xs = v }\nset([1])\nprintln(xs)\nset([\"no\"])",
+	"err_unhandled":      "fn f() { err(\"boom\") }\nprintln(\"before\")\nlet v = f()?",
+	"err_try_type":       "fn f(v) { v? }\nf(5)",
+	"err_json_result":    "import \"json\" as json\njson.stringify([ok(1)])",
+	"err_typed_let":      "fn g() { \"s\" }\nlet x: int = g()",
+	"err_typed_assign":   "let mut n: int = 1\nfn set(v) { n = v }\nset(2)\nprintln(n)\nset(\"s\")",
+	"err_typed_param":    "fn f(a: int) { a }\nfn call(v) { f(v) }\ncall(\"s\")",
+	"err_typed_callback": "import \"arrays\" as arrays\narrays.map([1, \"x\"], fn(v: int) { let w = v\nw })",
+	"err_typed_return":   "fn f(v) -> int {\n    if v { return v }\n    0\n}\nprintln(f(nil))\nf(\"s\")",
+	"err_typed_implicit": "fn f(v) -> string {\n    let x = v\n    x\n}\nf(1)",
+	"err_typed_no_else":  "fn f(v) -> int {\n    if v { 1 }\n}\nprintln(f(true))\nf(false)",
+	"err_typed_pipeline": "fn up(s: string) { s }\nfn run(v) { v |> up }\nrun(1)",
 }
 
 func TestNativeMatchesInterpreter(t *testing.T) {

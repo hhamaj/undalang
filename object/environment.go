@@ -96,7 +96,8 @@ func (e *Environment) DefineTyped(name string, val Object, mutable bool, typ *as
 // TypeMismatch is the error for a value that doesn't fit an annotation. what
 // says who wanted the type, like "x expects" or "add returns"
 func TypeMismatch(what string, typ *ast.TypeAnnotation, val Object) *Error {
-	return &Error{Message: fmt.Sprintf("type mismatch: %s %s, got %s", what, typ.Name, val.Type())}
+	_, detail := misfit(typ, val)
+	return &Error{Message: fmt.Sprintf("type mismatch: %s %s, got %s%s", what, typ, val.Type(), detail)}
 }
 
 func (e *Environment) Assign(name string, val Object) Object {
@@ -109,7 +110,7 @@ func (e *Environment) Assign(name string, val Object) Object {
 		if !binding.Mutable {
 			return &Error{Message: fmt.Sprintf("cannot assign to immutable binding %q", name)}
 		}
-		if binding.Type != nil && !binding.Type.Accepts(string(val.Type())) {
+		if binding.Type != nil && !Fits(binding.Type, val) {
 			return TypeMismatch(name+" expects", binding.Type, val)
 		}
 		binding.Value = val

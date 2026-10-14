@@ -202,11 +202,11 @@ Status:
 - structs: `struct Point { x: number, y: number }`, positional and named construction, field access, struct names as types, field assignment that copies (`p.x = 1`, also for map keys), checked statically and at runtime in both backends
 - C FFI: `extern "lib" { fn name(a: i32) -> f64 }` with integer, float, bool and cstring types, checked conversions, linking by library name or path. native backend only for now; the interpreter would need cgo or a dlopen library such as purego
 - opaque pointers: `ptr` in extern signatures and annotations for handles C gives out (`FILE *`, library objects). Unda code holds, compares and passes them back, nothing more; NULL is nil. this is the deliberately narrow pointer story: Unda values stay values, raw memory stays on the C side
-- next: element types, C struct layouts over FFI, a small module for C-owned buffers
+- element types: `array[int]`, `map[string, array[Point]]`, nested and with structs. checked statically from literals, indexing and for loops, and at runtime element by element, naming the first element that doesn't fit
+- next: C struct layouts over FFI, a small module for C-owned buffers
 
 Potential deliverables:
 - structs and user-defined data layouts
-- element types for collections (`array[int]`, `map[string, int]`), designed together with user-defined types
 - pointers/references
 - manual memory-control primitives (carefully scoped)
 - C FFI

@@ -138,19 +138,21 @@ func parse(t *testing.T, input string) *ast.Program {
 
 func TestParserTypeAnnotations(t *testing.T) {
 	tests := map[string]string{
-		"let x: int = 5":                               "let x: int = 5",
-		"let mut s: string = \"a\"":                    `let mut s: string = "a"`,
-		"fn add(a: int, b) -> int { a }":               "let add = fn add(a: int, b) -> int a",
-		"let f = fn(x: nil, y: fn) -> any { x }":       "let f = fn(x: nil, y: fn) -> any x",
-		"let g = fn() -> number { 1 }":                 "let g = fn() -> number 1",
-		"match 1 { n -> fn(v: float) -> float { v } }": "match 1 { n -> fn(v: float) -> float v }",
-		"let v = f(x)? + m.k?":                         "let v = ((f(x)?) + (m.k?))",
-		"match r { ok(v) -> v, err(_) -> 0 }":          "match r { ok(v) -> v, err(_) -> 0 }",
-		"match r { ok([a, ..]) if a -> a, err -> 1 }":  "match r { ok([a, ..]) if a -> a, err -> 1 }",
-		"fn f() -> result { ok(1) }":                   "let f = fn f() -> result ok(1)",
-		"struct P {\n  x: int\n  y\n}":                 "struct P { x: int, y }",
-		"let p: P = P(y: 1, x: 2)":                     "let p: P = P(y: 1, x: 2)",
-		"p.a.b = 3":                                    "p.a.b = 3",
+		"let x: int = 5":                                    "let x: int = 5",
+		"let mut s: string = \"a\"":                         `let mut s: string = "a"`,
+		"fn add(a: int, b) -> int { a }":                    "let add = fn add(a: int, b) -> int a",
+		"let f = fn(x: nil, y: fn) -> any { x }":            "let f = fn(x: nil, y: fn) -> any x",
+		"let g = fn() -> number { 1 }":                      "let g = fn() -> number 1",
+		"match 1 { n -> fn(v: float) -> float { v } }":      "match 1 { n -> fn(v: float) -> float v }",
+		"let v = f(x)? + m.k?":                              "let v = ((f(x)?) + (m.k?))",
+		"match r { ok(v) -> v, err(_) -> 0 }":               "match r { ok(v) -> v, err(_) -> 0 }",
+		"match r { ok([a, ..]) if a -> a, err -> 1 }":       "match r { ok([a, ..]) if a -> a, err -> 1 }",
+		"fn f() -> result { ok(1) }":                        "let f = fn f() -> result ok(1)",
+		"struct P {\n  x: int\n  y\n}":                      "struct P { x: int, y }",
+		"let p: P = P(y: 1, x: 2)":                          "let p: P = P(y: 1, x: 2)",
+		"p.a.b = 3":                                         "p.a.b = 3",
+		"let xs: array[int] = []":                           "let xs: array[int] = []",
+		"fn f(m: map[string, array[Point]]) -> array { m }": "let f = fn f(m: map[string, array[Point]]) -> array m",
 	}
 	for input, want := range tests {
 		program := parse(t, input)
@@ -175,6 +177,8 @@ func TestParserReportsOneErrorPerStatement(t *testing.T) {
 		"f(1).x = 2":              {"line 1:6 can only assign to fields of a named value"},
 		"extern \"m\" { fn cos(x: double) -> f64 }": {`line 1:24 unknown C type "double" (did you mean "f64"?)`},
 		"extern \"m\" { fn cos(x) }":                {"line 1:22 expected next token to be :, got ) instead"},
+		"let m: map[float, int] = {}":               {`line 1:22 map keys can't be float, use int, string, bool, nil or any`},
+		"let m: array[int = 1":                      {"line 1:18 expected next token to be ], got = instead"},
 		"let x: integer = 1":                        {`line 1:8 unknown type "integer" (did you mean "int"?)`},
 		"let x: strin = \"\"":                       {`line 1:8 unknown type "strin" (did you mean "string"?)`},
 		"fn f(a: ) { a }":                           {"line 1:9 expected next token to be IDENT, got ) instead"},
