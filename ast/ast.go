@@ -68,10 +68,14 @@ func (ls *LetStatement) String() string {
 	return out.String()
 }
 
+// AssignStatement is `name = value`, or `name.a.b = value` when Fields is set.
+// a field assignment builds a copy with that field changed and assigns the
+// copy to name, values never change in place
 type AssignStatement struct {
-	Token token.Token
-	Name  *Identifier
-	Value Expression
+	Token  token.Token
+	Name   *Identifier
+	Fields []*Identifier
+	Value  Expression
 }
 
 func (as *AssignStatement) statementNode()       {}
@@ -79,11 +83,37 @@ func (as *AssignStatement) TokenLiteral() string { return as.Token.Literal }
 func (as *AssignStatement) String() string {
 	var out bytes.Buffer
 	out.WriteString(as.Name.String())
+	for _, f := range as.Fields {
+		out.WriteString("." + f.String())
+	}
 	out.WriteString(" = ")
 	if as.Value != nil {
 		out.WriteString(as.Value.String())
 	}
 	return out.String()
+}
+
+// StructStatement declares a struct type and binds its constructor to Name
+type StructStatement struct {
+	Token  token.Token
+	Name   *Identifier
+	Fields []*Identifier
+	// Types lines up with Fields, nil where a field has no type
+	Types []*TypeAnnotation
+}
+
+func (ss *StructStatement) statementNode()       {}
+func (ss *StructStatement) TokenLiteral() string { return ss.Token.Literal }
+func (ss *StructStatement) String() string {
+	parts := make([]string, 0, len(ss.Fields))
+	for i, f := range ss.Fields {
+		part := f.String()
+		if ss.Types[i] != nil {
+			part += ": " + ss.Types[i].String()
+		}
+		parts = append(parts, part)
+	}
+	return "struct " + ss.Name.String() + " { " + strings.Join(parts, ", ") + " }"
 }
 
 type ReturnStatement struct {
@@ -366,8 +396,18 @@ var TypeNames = map[string][]string{
 	"any":    {"INTEGER", "FLOAT", "STRING", "BOOLEAN", "NIL", "ARRAY", "MAP", "FUNCTION", "BUILTIN", "MODULE", "RESULT"},
 }
 
-// Accepts reports whether a value with the given runtime type name fits
+// IsStruct reports whether the annotation names a struct. struct names start
+// with an uppercase letter, which no builtin type does
+func (ta *TypeAnnotation) IsStruct() bool { return IsStructName(ta.Name) }
+
+func IsStructName(name string) bool { return name != "" && name[0] >= 'A' && name[0] <= 'Z' }
+
+// Accepts reports whether a value with the given runtime type name fits. a
+// struct value's runtime type name is its struct's name
 func (ta *TypeAnnotation) Accepts(runtimeType string) bool {
+	if ta.Name == "any" || (ta.IsStruct() && ta.Name == runtimeType) {
+		return true
+	}
 	for _, name := range TypeNames[ta.Name] {
 		if name == runtimeType {
 			return true
@@ -614,6 +654,9 @@ type CallExpression struct {
 	Token     token.Token
 	Function  Expression
 	Arguments []Expression
+	// ArgNames is set for named arguments (`Point(x: 1, y: 2)`), one name per
+	// argument. only struct constructors take them
+	ArgNames []*Identifier
 }
 
 func (ce *CallExpression) expressionNode()      {}
@@ -621,8 +664,12 @@ func (ce *CallExpression) TokenLiteral() string { return ce.Token.Literal }
 func (ce *CallExpression) String() string {
 	var out bytes.Buffer
 	args := []string{}
-	for _, a := range ce.Arguments {
-		args = append(args, a.String())
+	for i, a := range ce.Arguments {
+		if ce.ArgNames != nil {
+			args = append(args, ce.ArgNames[i].String()+": "+a.String())
+		} else {
+			args = append(args, a.String())
+		}
 	}
 	out.WriteString(ce.Function.String())
 	out.WriteString("(")
@@ -649,6 +696,8 @@ func Position(node Node) (line, column int) {
 	case *ReturnStatement:
 		tok = n.Token
 	case *ImportStatement:
+		tok = n.Token
+	case *StructStatement:
 		tok = n.Token
 	case *WhileStatement:
 		tok = n.Token

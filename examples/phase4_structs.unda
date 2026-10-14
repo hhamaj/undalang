@@ -1,0 +1,31 @@
+// structs group named fields. they're values like everything else: changing
+// a field gives the variable a changed copy, nothing else sees it
+
+import "arrays" as arrays
+
+struct Point {
+    x: number
+    y: number
+}
+
+struct Rect {
+    name: string
+    min: Point
+    max: Point
+}
+
+fn area(r: Rect) -> number {
+    (r.max.x - r.min.x) * (r.max.y - r.min.y)
+}
+
+let unit = Rect("unit", Point(0, 0), Point(1, 1))
+let mut big = unit
+big.name = "big"
+big.max.x = 10
+big.max.y = 5
+
+for r in [unit, big] {
+    println(r.name, area(r))
+}
+println(unit)
+println(arrays.map([1, 2, 3], fn(n) { Point(x: n, y: n * n) }))

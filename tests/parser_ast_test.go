@@ -148,6 +148,9 @@ func TestParserTypeAnnotations(t *testing.T) {
 		"match r { ok(v) -> v, err(_) -> 0 }":          "match r { ok(v) -> v, err(_) -> 0 }",
 		"match r { ok([a, ..]) if a -> a, err -> 1 }":  "match r { ok([a, ..]) if a -> a, err -> 1 }",
 		"fn f() -> result { ok(1) }":                   "let f = fn f() -> result ok(1)",
+		"struct P {\n  x: int\n  y\n}":                 "struct P { x: int, y }",
+		"let p: P = P(y: 1, x: 2)":                     "let p: P = P(y: 1, x: 2)",
+		"p.a.b = 3":                                    "p.a.b = 3",
 	}
 	for input, want := range tests {
 		program := parse(t, input)
@@ -165,6 +168,11 @@ func TestParserReportsOneErrorPerStatement(t *testing.T) {
 		"let x = @":               {`line 1:9 unexpected character "@"`},
 		"let = 5\nlet y = 2\nz +": {"line 1:5 expected next token to be IDENT, got = instead", "line 4:1 unexpected end of input"},
 		"let x: foo = 1":          {`line 1:8 unknown type "foo"`},
+		"struct point { x }":      {`line 1:8 struct names start with an uppercase letter, got "point"`},
+		"struct P { a, a }":       {"line 1:15 duplicate field a in P"},
+		"struct STRING { a }":     {"line 1:8 STRING is a builtin type name"},
+		"1 |> P(a: 2)":            {"line 1:12 named arguments can't follow |>, the piped value has no name"},
+		"f(1).x = 2":              {"line 1:6 can only assign to fields of a named value"},
 		"let x: integer = 1":      {`line 1:8 unknown type "integer" (did you mean "int"?)`},
 		"let x: strin = \"\"":     {`line 1:8 unknown type "strin" (did you mean "string"?)`},
 		"fn f(a: ) { a }":         {"line 1:9 expected next token to be IDENT, got ) instead"},

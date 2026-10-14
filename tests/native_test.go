@@ -352,6 +352,43 @@ println(redefined())
 	"err_fast_mismatch":    "fn s(a, b) { a < b }\nprintln(s(1, 2))\ns(1, \"x\")",
 	"err_direct_too_early": "fn a() { b() }\na()\nfn b() { 1 }",
 	"err_direct_depth":     "fn down(n) { down(n + 1) }\ndown(0)",
+	"structs": `import "arrays" as arrays
+struct Point { x: number, y: number }
+struct Shape {
+    name: string
+    at: Point
+    tags
+}
+let p = Point(1, 2.5)
+let s = Shape(tags: [], at: p, name: "dot")
+println(p, s, p.x + p.y, s.at.y, type(p), type(Point), Point)
+println(p == Point(1, 2.5), p == Point(1, 2), p != s, [p] == [Point(1, 2.5)])
+let mut moved = s
+moved.at.x = 10
+moved.tags = ["new"]
+println(moved, s)
+fn shift(pt: Point, by: number) -> Point { Point(pt.x + by, pt.y + by) }
+println(shift(p, 1), arrays.map([1, 2], fn(n) { Point(n, n) }), arrays.map([[3, 4]], fn(a) { match a { [x, y] -> Point(x, y) } }))
+let mut cfg = {"db": {"port": 1}}
+cfg.db.port = 2
+cfg.db.host = "x"
+cfg.name = "app"
+println(cfg)
+for pair in [Point(0, 0), Point(3, 4)] { println(pair.x * pair.x + pair.y * pair.y) }
+fn exact(v) { match v { Point(1, 2.5) -> "exact", _ -> "other" } }
+let any_v: any = p
+println(any_v, exact(p), exact(Point(0, 0)))
+`,
+	"err_struct_member":    "struct P { a }\nfn get(v) { v.b }\nget(P(1))",
+	"err_struct_ctor_type": "struct P { a: int }\nfn mk(v) { P(v) }\nprintln(mk(1))\nmk(\"s\")",
+	"err_struct_named":     "struct P { a, b }\nfn mk(c, v) { c(a: v) }\nprintln(mk(P, 1))",
+	"err_struct_named_fn":  "fn f(a) { a }\nfn call(g) { g(a: 1) }\ncall(f)",
+	"err_struct_field_set": "struct P { a: int }\nfn set(p, v) { let mut q = p\nq.a = v\nq }\nprintln(set(P(1), 2))\nset(P(1), nil)",
+	"err_struct_set_int":   "fn set(v) { let mut q = v\nq.a = 1 }\nset(5)",
+	"err_struct_arity":     "struct P { a }\nfn mk(f) { f(1, 2) }\nmk(P)",
+	"err_struct_typed":     "struct P { a }\nstruct Q { a }\nfn f(p: P) { p }\nfn call(v) { f(v) }\ncall(Q(1))",
+	"err_struct_json":      "import \"json\" as json\nstruct P { a }\njson.stringify(P(1))",
+	"err_struct_add":       "struct P { a }\nfn add(v) { v + 1 }\nadd(P(1))",
 	"err_unhandled":        "fn f() { err(\"boom\") }\nprintln(\"before\")\nlet v = f()?",
 	"err_try_type":         "fn f(v) { v? }\nf(5)",
 	"err_json_result":      "import \"json\" as json\njson.stringify([ok(1)])",
@@ -407,7 +444,7 @@ util.fail(2)
 
 func TestNativeExamples(t *testing.T) {
 	cc := requireCC(t)
-	for _, name := range []string{"phase0", "mutability", "phase1_data_pipeline", "phase3_types", "phase3_results"} {
+	for _, name := range []string{"phase0", "mutability", "phase1_data_pipeline", "phase3_types", "phase3_results", "phase4_structs"} {
 		t.Run(name, func(t *testing.T) {
 			compareBackends(t, cc, filepath.Join("..", "examples", name+".unda"))
 		})

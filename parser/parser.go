@@ -59,6 +59,8 @@ type Parser struct {
 
 	curToken  token.Token
 	peekToken token.Token
+	// ahead holds tokens read past peekToken by peekAt
+	ahead []token.Token
 
 	prefixParseFns map[token.Type]prefixParseFn
 	infixParseFns  map[token.Type]infixParseFn
@@ -158,8 +160,10 @@ func (p *Parser) parseStatement() ast.Statement {
 		return stmt
 	case p.curTokenIs(token.Ident) && p.peekTokenIs(token.Assign):
 		return p.parseAssignStatement()
+	case p.curTokenIs(token.Struct):
+		return p.parseStructStatement()
 	default:
-		return p.parseExpressionStatement()
+		return p.parseExpressionOrFieldAssign()
 	}
 }
 
@@ -308,6 +312,93 @@ func (p *Parser) parseReturnStatement() *ast.ReturnStatement {
 	return stmt
 }
 
+// parseStructStatement parses `struct Name { a: int, b }`. the commas
+// between fields are optional so one field per line reads fine
+func (p *Parser) parseStructStatement() ast.Statement {
+	stmt := &ast.StructStatement{Token: p.curToken}
+	if !p.expectPeek(token.Ident) {
+		return nil
+	}
+	stmt.Name = &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+	if !ast.IsStructName(stmt.Name.Value) {
+		p.errors = append(p.errors, p.atCur(fmt.Sprintf("struct names start with an uppercase letter, got %q", stmt.Name.Value)))
+		return nil
+	}
+	if reservedTypeNames[stmt.Name.Value] {
+		p.errors = append(p.errors, p.atCur(fmt.Sprintf("%s is a builtin type name", stmt.Name.Value)))
+		return nil
+	}
+	if !p.expectPeek(token.LBrace) {
+		return nil
+	}
+	seen := map[string]bool{}
+	for !p.peekTokenIs(token.RBrace) {
+		if !p.expectPeek(token.Ident) {
+			return nil
+		}
+		if seen[p.curToken.Literal] {
+			p.errors = append(p.errors, p.atCur(fmt.Sprintf("duplicate field %s in %s", p.curToken.Literal, stmt.Name.Value)))
+			return nil
+		}
+		seen[p.curToken.Literal] = true
+		stmt.Fields = append(stmt.Fields, &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal})
+		var typ *ast.TypeAnnotation
+		if p.peekTokenIs(token.Colon) {
+			p.nextToken()
+			if typ = p.parseTypeAnnotation(); typ == nil {
+				return nil
+			}
+		}
+		stmt.Types = append(stmt.Types, typ)
+		if p.peekTokenIs(token.Comma) {
+			p.nextToken()
+		}
+	}
+	p.nextToken()
+	return stmt
+}
+
+// reservedTypeNames are the runtime's own type names. a struct can't take
+// one, since a struct value's type name is its struct's name
+var reservedTypeNames = map[string]bool{
+	"INTEGER": true, "FLOAT": true, "STRING": true, "BOOLEAN": true, "NIL": true, "ARRAY": true,
+	"MAP": true, "FUNCTION": true, "BUILTIN": true, "MODULE": true, "RESULT": true, "STRUCT": true,
+	"ERROR": true, "RETURN_VALUE": true, "BREAK": true, "CONTINUE": true,
+}
+
+// parseExpressionOrFieldAssign parses an expression statement, or a field
+// assignment like `p.x = 1` when a member chain on a name is followed by `=`
+func (p *Parser) parseExpressionOrFieldAssign() ast.Statement {
+	stmt := p.parseExpressionStatement()
+	member, ok := stmt.Expression.(*ast.MemberExpression)
+	if !ok || !p.peekTokenIs(token.Assign) {
+		return stmt
+	}
+	var fields []*ast.Identifier
+	var root ast.Expression = member
+	for {
+		m, ok := root.(*ast.MemberExpression)
+		if !ok {
+			break
+		}
+		fields = append([]*ast.Identifier{m.Property}, fields...)
+		root = m.Object
+	}
+	name, ok := root.(*ast.Identifier)
+	if !ok {
+		p.errors = append(p.errors, p.atCur("can only assign to fields of a named value"))
+		return nil
+	}
+	assign := &ast.AssignStatement{Token: p.peekToken, Name: name, Fields: fields}
+	p.nextToken()
+	p.nextToken()
+	assign.Value = p.parseExpression(lowest)
+	if p.peekTokenIs(token.Semicolon) {
+		p.nextToken()
+	}
+	return assign
+}
+
 func (p *Parser) parseExpressionStatement() *ast.ExpressionStatement {
 	stmt := &ast.ExpressionStatement{Token: p.curToken}
 	stmt.Expression = p.parseExpression(lowest)
@@ -397,6 +488,10 @@ func (p *Parser) parsePipelineExpression(left ast.Expression) ast.Expression {
 	precedence := p.curPrecedence()
 	p.nextToken()
 	expression.Right = p.parseExpression(precedence)
+	if call, ok := expression.Right.(*ast.CallExpression); ok && call.ArgNames != nil {
+		p.errors = append(p.errors, p.atCur("named arguments can't follow |>, the piped value has no name"))
+		return nil
+	}
 	return expression
 }
 
@@ -540,7 +635,7 @@ func (p *Parser) parseTypeAnnotation() *ast.TypeAnnotation {
 		return nil
 	}
 	p.nextToken()
-	if _, ok := ast.TypeNames[p.curToken.Literal]; !ok {
+	if _, ok := ast.TypeNames[p.curToken.Literal]; !ok && !ast.IsStructName(p.curToken.Literal) {
 		hint := diag.DidYouMean(p.curToken.Literal, typeNames())
 		if alias, ok := typeAliases[p.curToken.Literal]; ok {
 			hint = fmt.Sprintf(" (did you mean %q?)", alias)
@@ -553,7 +648,38 @@ func (p *Parser) parseTypeAnnotation() *ast.TypeAnnotation {
 
 func (p *Parser) parseCallExpression(function ast.Expression) ast.Expression {
 	exp := &ast.CallExpression{Token: p.curToken, Function: function}
+	if p.peekTokenIs(token.Ident) && p.peekAt(1).Type == token.Colon {
+		return p.parseNamedArguments(exp)
+	}
 	exp.Arguments = p.parseExpressionList(token.RParen)
+	return exp
+}
+
+// parseNamedArguments parses `(a: 1, b: 2)`. every argument needs a name once
+// the first one has one
+func (p *Parser) parseNamedArguments(exp *ast.CallExpression) ast.Expression {
+	exp.Arguments = []ast.Expression{}
+	exp.ArgNames = []*ast.Identifier{}
+	for !p.peekTokenIs(token.RParen) {
+		if len(exp.Arguments) > 0 && !p.expectPeek(token.Comma) {
+			return nil
+		}
+		if !p.expectPeek(token.Ident) {
+			return nil
+		}
+		name := &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
+		if !p.expectPeek(token.Colon) {
+			return nil
+		}
+		p.nextToken()
+		arg := p.parseExpression(lowest)
+		if arg == nil {
+			return nil
+		}
+		exp.ArgNames = append(exp.ArgNames, name)
+		exp.Arguments = append(exp.Arguments, arg)
+	}
+	p.nextToken()
 	return exp
 }
 
@@ -760,7 +886,20 @@ func typeNames() []string {
 
 func (p *Parser) nextToken() {
 	p.curToken = p.peekToken
+	if len(p.ahead) > 0 {
+		p.peekToken = p.ahead[0]
+		p.ahead = p.ahead[1:]
+		return
+	}
 	p.peekToken = p.l.NextToken()
+}
+
+// peekAt returns the token n places after peekToken without moving
+func (p *Parser) peekAt(n int) token.Token {
+	for len(p.ahead) < n {
+		p.ahead = append(p.ahead, p.l.NextToken())
+	}
+	return p.ahead[n-1]
 }
 
 func (p *Parser) registerPrefix(tokenType token.Type, fn prefixParseFn) {

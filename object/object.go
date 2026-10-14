@@ -250,3 +250,87 @@ func (m *Module) Inspect() string {
 	sort.Strings(keys)
 	return fmt.Sprintf("module %s {%s}", m.Name, strings.Join(keys, ", "))
 }
+
+const StructDefObj = "STRUCT"
+
+// StructDef is a struct type. calling it builds a value
+type StructDef struct {
+	Name   string
+	Fields []string
+	// Types lines up with Fields, nil where a field takes anything
+	Types []*ast.TypeAnnotation
+}
+
+func (d *StructDef) Type() Type      { return StructDefObj }
+func (d *StructDef) Inspect() string { return "struct " + d.Name }
+
+func (d *StructDef) FieldIndex(name string) int {
+	for i, f := range d.Fields {
+		if f == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func (d *StructDef) NoField(name string) *Error {
+	return &Error{Message: fmt.Sprintf("%s has no field %q", d.Name, name)}
+}
+
+// CheckField returns an error when v doesn't fit field i's type
+func (d *StructDef) CheckField(i int, v Object) *Error {
+	if t := d.Types[i]; t != nil && !t.Accepts(string(v.Type())) {
+		return TypeMismatch("field "+d.Fields[i]+" of "+d.Name+" expects", t, v)
+	}
+	return nil
+}
+
+// New builds a value from positional arguments, or named ones when names is
+// set. the native runtime's u_struct_new makes the same checks in the same
+// order
+func (d *StructDef) New(args []Object, names []string) Object {
+	values := make([]Object, len(d.Fields))
+	if names == nil {
+		if len(args) != len(d.Fields) {
+			return &Error{Message: fmt.Sprintf("wrong number of arguments: expected %d, got %d", len(d.Fields), len(args))}
+		}
+		copy(values, args)
+	} else {
+		for i, name := range names {
+			idx := d.FieldIndex(name)
+			if idx < 0 {
+				return d.NoField(name)
+			}
+			if values[idx] != nil {
+				return &Error{Message: fmt.Sprintf("field %s given twice", name)}
+			}
+			values[idx] = args[i]
+		}
+		for i, v := range values {
+			if v == nil {
+				return &Error{Message: fmt.Sprintf("missing field %s for %s", d.Fields[i], d.Name)}
+			}
+		}
+	}
+	for i, v := range values {
+		if err := d.CheckField(i, v); err != nil {
+			return err
+		}
+	}
+	return &Struct{Def: d, Fields: values}
+}
+
+// Struct is a struct value. its runtime type name is the struct's name
+type Struct struct {
+	Def    *StructDef
+	Fields []Object
+}
+
+func (s *Struct) Type() Type { return Type(s.Def.Name) }
+func (s *Struct) Inspect() string {
+	parts := make([]string, len(s.Fields))
+	for i, v := range s.Fields {
+		parts[i] = s.Def.Fields[i] + ": " + v.Inspect()
+	}
+	return s.Def.Name + "(" + strings.Join(parts, ", ") + ")"
+}

@@ -47,6 +47,9 @@ type Context struct {
 	// fn is the function whose body is running, return statements check
 	// against its return type. nil at the top level of a module
 	fn *object.Function
+	// structs keeps one StructDef per declaration, so running a struct
+	// statement twice gives the same type, like the native backend
+	structs map[*ast.StructStatement]*object.StructDef
 }
 
 func NewContext(baseDir string, out io.Writer) *Context {
@@ -60,6 +63,7 @@ func NewContext(baseDir string, out io.Writer) *Context {
 		Out:      out,
 		loading:  map[string]bool{},
 		modules:  map[string]*object.Module{},
+		structs:  map[*ast.StructStatement]*object.StructDef{},
 		builtins: builtins.New(out),
 	}
 }
@@ -112,7 +116,27 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		if isAbrupt(val) {
 			return val
 		}
+		if len(node.Fields) > 0 {
+			current, ok := env.Get(node.Name.Value)
+			if !ok {
+				return newError("identifier not found: %s", node.Name.Value)
+			}
+			if val = withFields(current, node.Fields, val); isError(val) {
+				return val
+			}
+		}
 		return env.Assign(node.Name.Value, val)
+	case *ast.StructStatement:
+		def := ctx.structs[node]
+		if def == nil {
+			def = &object.StructDef{Name: node.Name.Value, Types: node.Types}
+			for _, f := range node.Fields {
+				def.Fields = append(def.Fields, f.Value)
+			}
+			ctx.structs[node] = def
+		}
+		env.Define(node.Name.Value, def, false)
+		return def
 	case *ast.ReturnStatement:
 		val := EvalWithContext(node.ReturnValue, env, ctx)
 		if isAbrupt(val) {
@@ -223,9 +247,66 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		if len(args) == 1 && isAbrupt(args[0]) {
 			return args[0]
 		}
+		if node.ArgNames != nil {
+			return applyNamed(fn, args, node.ArgNames)
+		}
 		return applyFunctionWithContext(fn, args, ctx)
 	}
 	return nil
+}
+
+func applyNamed(fn object.Object, args []object.Object, idents []*ast.Identifier) object.Object {
+	def, ok := fn.(*object.StructDef)
+	if !ok {
+		return newError("named arguments only work with struct constructors, got %s", fn.Type())
+	}
+	names := make([]string, len(idents))
+	for i, id := range idents {
+		names[i] = id.Value
+	}
+	return def.New(args, names)
+}
+
+// withFields returns a copy of obj with the field path set to v. structs and
+// maps both take fields, a map field is its string key
+func withFields(obj object.Object, fields []*ast.Identifier, v object.Object) object.Object {
+	name := fields[0].Value
+	switch o := obj.(type) {
+	case *object.Struct:
+		i := o.Def.FieldIndex(name)
+		if i < 0 {
+			return o.Def.NoField(name)
+		}
+		if len(fields) > 1 {
+			if v = withFields(o.Fields[i], fields[1:], v); isError(v) {
+				return v
+			}
+		}
+		if err := o.Def.CheckField(i, v); err != nil {
+			return err
+		}
+		out := &object.Struct{Def: o.Def, Fields: append([]object.Object{}, o.Fields...)}
+		out.Fields[i] = v
+		return out
+	case *object.Map:
+		key := &object.String{Value: name}
+		if len(fields) > 1 {
+			var inner object.Object = nilObj
+			if pair, ok := o.Pairs[key.HashKey()]; ok {
+				inner = pair.Value
+			}
+			if v = withFields(inner, fields[1:], v); isError(v) {
+				return v
+			}
+		}
+		pairs := make(map[object.HashKey]object.MapPair, len(o.Pairs)+1)
+		for k, pair := range o.Pairs {
+			pairs[k] = pair
+		}
+		pairs[key.HashKey()] = object.MapPair{Key: key, Value: v}
+		return &object.Map{Pairs: pairs}
+	}
+	return newError("cannot set field %s on %s", name, obj.Type())
 }
 
 func evalProgram(program *ast.Program, env *object.Environment, ctx *Context) object.Object {
@@ -603,9 +684,15 @@ func evalMemberExpression(obj object.Object, property string) object.Object {
 		}
 		return nilObj
 	}
+	if s, ok := obj.(*object.Struct); ok {
+		if i := s.Def.FieldIndex(property); i >= 0 {
+			return s.Fields[i]
+		}
+		return s.Def.NoField(property)
+	}
 	module, ok := obj.(*object.Module)
 	if !ok {
-		return newError("member access expects module or map, got %s", obj.Type())
+		return newError("member access expects module, map or struct, got %s", obj.Type())
 	}
 	value, ok := module.Members[property]
 	if !ok {
@@ -860,6 +947,8 @@ func applyFunctionWithContext(fn object.Object, args []object.Object, ctx *Conte
 		return evaluated
 	case *object.Builtin:
 		return fn.Fn(args...)
+	case *object.StructDef:
+		return fn.New(args, nil)
 	default:
 		return newError("not a function: %s", fn.Type())
 	}
@@ -955,6 +1044,17 @@ func objectsEqual(left, right object.Object) bool {
 	case *object.Result:
 		right, ok := right.(*object.Result)
 		return ok && left.Ok == right.Ok && objectsEqual(left.Value, right.Value)
+	case *object.Struct:
+		right, ok := right.(*object.Struct)
+		if !ok || left.Def != right.Def {
+			return false
+		}
+		for i := range left.Fields {
+			if !objectsEqual(left.Fields[i], right.Fields[i]) {
+				return false
+			}
+		}
+		return true
 	case *object.Map:
 		right, ok := right.(*object.Map)
 		if !ok || len(left.Pairs) != len(right.Pairs) {

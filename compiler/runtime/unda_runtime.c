@@ -25,7 +25,7 @@
 #include <time.h>
 #include <unistd.h>
 
-typedef enum { U_UNDEF = 0, U_NIL, U_BOOL, U_INT, U_FLOAT, U_STR, U_ARR, U_MAP, U_FN, U_BUILTIN, U_MOD, U_RES } UTag;
+typedef enum { U_UNDEF = 0, U_NIL, U_BOOL, U_INT, U_FLOAT, U_STR, U_ARR, U_MAP, U_FN, U_BUILTIN, U_MOD, U_RES, U_STRUCT, U_SDEF } UTag;
 
 typedef struct UStr { size_t len; char data[]; } UStr;
 typedef struct UArr UArr;
@@ -33,11 +33,23 @@ typedef struct UMap UMap;
 typedef struct UFn UFn;
 typedef struct UMod UMod;
 typedef struct URes URes;
+typedef struct UStruct UStruct;
+typedef struct UStructDef UStructDef;
 
 typedef struct UValue {
     UTag tag;
-    union { bool b; int64_t i; double f; UStr *s; UArr *a; UMap *m; UFn *fn; UMod *mod; URes *r; } as;
+    union { bool b; int64_t i; double f; UStr *s; UArr *a; UMap *m; UFn *fn; UMod *mod; URes *r; UStruct *st; UStructDef *sd; } as;
 } UValue;
+
+/*
+ * a type annotation as the runtime checks it. a struct type has sname set and
+ * mask 0, tname is how the annotation was written, NULL means no check
+ */
+typedef struct { unsigned mask; const char *sname; const char *tname; } UAnnot;
+
+/* struct definitions are static data emitted by the compiler */
+struct UStructDef { const char *name; int n; const char **fields; const UAnnot *types; };
+struct UStruct { UStructDef *def; UValue fields[]; };
 
 struct URes { bool ok; UValue v; };
 
@@ -360,6 +372,8 @@ static const char *u_type_name(UValue v) {
     case U_BUILTIN: return "BUILTIN";
     case U_MOD: return "MODULE";
     case U_RES: return "RESULT";
+    case U_STRUCT: return v.as.st->def->name;
+    case U_SDEF: return "STRUCT";
     default: return "UNDEFINED";
     }
 }
@@ -531,6 +545,20 @@ static void u_inspect_to(USb *sb, UValue v) {
         u_inspect_to(sb, v.as.r->v);
         sb_putc(sb, ')');
         break;
+    case U_STRUCT: {
+        UStruct *st = v.as.st;
+        sb_puts(sb, st->def->name);
+        sb_putc(sb, '(');
+        for (int i = 0; i < st->def->n; i++) {
+            if (i) sb_puts(sb, ", ");
+            sb_puts(sb, st->def->fields[i]);
+            sb_puts(sb, ": ");
+            u_inspect_to(sb, st->fields[i]);
+        }
+        sb_putc(sb, ')');
+        break;
+    }
+    case U_SDEF: sb_puts(sb, "struct "); sb_puts(sb, v.as.sd->name); break;
     default: sb_puts(sb, "<undefined>"); break;
     }
 }
@@ -650,6 +678,12 @@ static bool u_equal(UValue a, UValue b) {
     case U_FN: case U_BUILTIN: return b.tag == a.tag && a.as.fn == b.as.fn;
     case U_MOD: return b.tag == U_MOD && a.as.mod == b.as.mod;
     case U_RES: return b.tag == U_RES && a.as.r->ok == b.as.r->ok && u_equal(a.as.r->v, b.as.r->v);
+    case U_STRUCT:
+        if (b.tag != U_STRUCT || a.as.st->def != b.as.st->def) return false;
+        for (int i = 0; i < a.as.st->def->n; i++)
+            if (!u_equal(a.as.st->fields[i], b.as.st->fields[i])) return false;
+        return true;
+    case U_SDEF: return b.tag == U_SDEF && a.as.sd == b.as.sd;
     default: return false;
     }
 }
@@ -804,12 +838,89 @@ static void u_iter(UValue v, int vars, UArr **first, UArr **second) {
     *second = b;
 }
 
+/* structs */
+
+static inline UValue uv_sdef(UStructDef *d) { UValue v; v.tag = U_SDEF; v.as.sd = d; return v; }
+
+static int u_field_index(const UStructDef *d, const char *name) {
+    for (int i = 0; i < d->n; i++)
+        if (!strcmp(d->fields[i], name)) return i;
+    return -1;
+}
+
+static bool u_annot_accepts(const UAnnot *a, UValue v) {
+    if (!a->tname) return true;
+    if (a->sname) return v.tag == U_STRUCT && !strcmp(v.as.st->def->name, a->sname);
+    return (a->mask & (1u << v.tag)) != 0;
+}
+
+static void u_check_field(const UStructDef *d, int i, UValue v) {
+    if (!u_annot_accepts(&d->types[i], v))
+        u_panic("type mismatch: field %s of %s expects %s, got %s", d->fields[i], d->name, d->types[i].tname, u_type_name(v));
+}
+
+/* mirrors object.StructDef.New, same checks in the same order */
+static UValue u_struct_new(UStructDef *d, int argc, UValue *argv, const char **names) {
+    UStruct *st = u_alloc(sizeof(UStruct) + (size_t)(d->n ? d->n : 1) * sizeof(UValue));
+    st->def = d;
+    if (!names) {
+        if (argc != d->n) u_panic("wrong number of arguments: expected %d, got %d", d->n, argc);
+        for (int i = 0; i < argc; i++) st->fields[i] = argv[i];
+    } else {
+        for (int i = 0; i < argc; i++) {
+            int idx = u_field_index(d, names[i]);
+            if (idx < 0) u_panic("%s has no field \"%s\"", d->name, names[i]);
+            if (st->fields[idx].tag != U_UNDEF) u_panic("field %s given twice", names[i]);
+            st->fields[idx] = argv[i];
+        }
+        for (int i = 0; i < d->n; i++)
+            if (st->fields[i].tag == U_UNDEF) u_panic("missing field %s for %s", d->fields[i], d->name);
+    }
+    for (int i = 0; i < d->n; i++) u_check_field(d, i, st->fields[i]);
+    UValue v; v.tag = U_STRUCT; v.as.st = st;
+    return v;
+}
+
+/* returns a copy of obj with the field path set to v, see evaluator.withFields */
+static UValue u_with_fields(UValue obj, int n, const char **fields, UValue v) {
+    const char *name = fields[0];
+    if (obj.tag == U_STRUCT) {
+        UStructDef *d = obj.as.st->def;
+        int i = u_field_index(d, name);
+        if (i < 0) u_panic("%s has no field \"%s\"", d->name, name);
+        if (n > 1) v = u_with_fields(obj.as.st->fields[i], n - 1, fields + 1, v);
+        u_check_field(d, i, v);
+        UStruct *st = u_alloc(sizeof(UStruct) + (size_t)(d->n ? d->n : 1) * sizeof(UValue));
+        st->def = d;
+        memcpy(st->fields, obj.as.st->fields, (size_t)d->n * sizeof(UValue));
+        st->fields[i] = v;
+        UValue out; out.tag = U_STRUCT; out.as.st = st;
+        return out;
+    }
+    if (obj.tag == U_MAP) {
+        UValue key = uv_cstr(name);
+        if (n > 1) {
+            int64_t idx = u_map_find(obj.as.m, key);
+            v = u_with_fields(idx < 0 ? uv_nil() : obj.as.m->entries[idx].value, n - 1, fields + 1, v);
+        }
+        UMap *m = u_map_copy(obj.as.m);
+        u_map_set(m, key, v);
+        return uv_mapv(m);
+    }
+    u_panic("cannot set field %s on %s", name, u_type_name(obj));
+}
+
 static UValue u_member(UValue obj, const char *name) {
     if (obj.tag == U_MAP) {
         int64_t idx = u_map_find(obj.as.m, uv_cstr(name));
         return idx < 0 ? uv_nil() : obj.as.m->entries[idx].value;
     }
-    if (obj.tag != U_MOD) u_panic("member access expects module or map, got %s", u_type_name(obj));
+    if (obj.tag == U_STRUCT) {
+        int i = u_field_index(obj.as.st->def, name);
+        if (i < 0) u_panic("%s has no field \"%s\"", obj.as.st->def->name, name);
+        return obj.as.st->fields[i];
+    }
+    if (obj.tag != U_MOD) u_panic("member access expects module, map or struct, got %s", u_type_name(obj));
     UMod *m = obj.as.mod;
     for (int i = 0; i < m->count; i++)
         if (strcmp(m->names[i], name) == 0) return m->values[i];
@@ -823,6 +934,7 @@ static UValue u_member(UValue obj, const char *name) {
  */
 static UValue u_call(UValue f, int argc, UValue *argv) {
     if (f.tag == U_BUILTIN) return f.as.fn->code(NULL, argc, argv);
+    if (f.tag == U_SDEF) return u_struct_new(f.as.sd, argc, argv, NULL);
     if (f.tag != U_FN) u_panic("not a function: %s", u_type_name(f));
     if (argc != f.as.fn->arity) u_panic("wrong number of arguments: expected %d, got %d", f.as.fn->arity, argc);
     if (u_depth >= U_MAX_DEPTH) u_panic("maximum call depth exceeded");
@@ -844,6 +956,15 @@ static void u_unhandled(UValue v) {
     USb sb = {0};
     u_inspect_to(&sb, v);
     u_panic("unhandled %.*s", (int)sb.len, sb.buf);
+}
+
+static UValue u_call_named(UValue f, int argc, UValue *argv, const char **names) {
+    if (f.tag != U_SDEF) u_panic("named arguments only work with struct constructors, got %s", u_type_name(f));
+    return u_struct_new(f.as.sd, argc, argv, names);
+}
+
+static void u_check_struct(UValue v, const char *sname, const char *what) {
+    if (v.tag != U_STRUCT || strcmp(v.as.st->def->name, sname)) u_panic("type mismatch: %s, got %s", what, u_type_name(v));
 }
 
 /* panics unless v's tag is in mask. what is like "x expects int" */
@@ -1001,10 +1122,11 @@ U_BUILTIN_FN(ub_type) {
     (void)env_;
     U_ARGC("type", 1);
     const char *name = u_type_name(argv[0]);
-    char lower[32];
     size_t n = strlen(name);
-    for (size_t i = 0; i <= n; i++) lower[i] = (char)(name[i] >= 'A' && name[i] <= 'Z' ? name[i] + 32 : name[i]);
-    return uv_cstr(lower);
+    UValue out = uv_str_n(name, n);
+    for (size_t i = 0; i < n; i++)
+        if (out.as.s->data[i] >= 'A' && out.as.s->data[i] <= 'Z') out.as.s->data[i] += 32;
+    return out;
 }
 
 static UValue u_read_common(const char *name, int argc, UValue *argv) {

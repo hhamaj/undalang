@@ -156,6 +156,10 @@ func AnalyzeSource(source, file, dir string, opts Options) *Program {
 }
 
 type analyzer struct {
+	// structs lists every struct declared in the modules loaded so far, by
+	// name. types refer to structs by name, so two with the same name make it
+	// ambiguous and the checker stops guessing
+	structs map[string][]*ast.StructStatement
 	opts    Options
 	prog    *Program
 	loading map[string]bool
@@ -166,6 +170,7 @@ type analyzer struct {
 func newAnalyzer(opts Options) *analyzer {
 	return &analyzer{
 		opts:    opts,
+		structs: map[string][]*ast.StructStatement{},
 		prog:    &Program{sources: map[string]string{}},
 		loading: map[string]bool{},
 		loaded:  map[string]*Module{},
@@ -261,6 +266,12 @@ func (c *checker) run() {
 	top := c.newFunc(nil, nil)
 	c.mod.Top = top
 	sc := newScope(nil, top)
+	walk(c.mod.Program, func(n ast.Node) bool {
+		if s, ok := n.(*ast.StructStatement); ok {
+			c.a.structs[s.Name.Value] = append(c.a.structs[s.Name.Value], s)
+		}
+		return true
+	})
 	for _, stmt := range c.mod.Program.Statements {
 		c.stmt(stmt, sc)
 	}
@@ -310,19 +321,21 @@ func (c *checker) function(p pending) {
 	params := newScope(p.scope, p.fn)
 	params.boundary = true
 	for i, param := range lit.Parameters {
+		c.checkAnnot(paramAnnot(lit, i))
 		sym := c.declare(params, param.Value, false, unknown(), paramAnnot(lit, i))
 		p.fn.ParamSlots = append(p.fn.ParamSlots, sym.Slot)
 	}
 	outerLoops := c.loops
 	c.loops = 0
 	c.fn = lit
+	c.checkAnnot(lit.ReturnType)
 	t := c.block(lit.Body, newScope(params, p.fn))
 	if !fits(t, lit.ReturnType) {
 		var at ast.Node = lit.Body
 		if n := len(lit.Body.Statements); n > 0 {
 			at = lit.Body.Statements[n-1]
 		}
-		c.errorf(at, "type mismatch: %s %s, got %s", returnLabel(lit), lit.ReturnType.Name, t.Kind)
+		c.errorf(at, "type mismatch: %s %s, got %s", returnLabel(lit), lit.ReturnType.Name, t.Name())
 	}
 	c.fn = nil
 	c.loops = outerLoops
@@ -344,20 +357,58 @@ func returnLabel(lit *ast.FunctionLiteral) string {
 	return "function returns"
 }
 
+// annotType is what a value of an annotated type is known to be
+func (c *checker) annotType(a *ast.TypeAnnotation) Type {
+	t := kindType(AnnotationKind(a))
+	if a != nil && a.IsStruct() {
+		t.Struct = c.lookupStruct(a.Name)
+	}
+	return t
+}
+
+// narrow keeps what we know about t but drops the kinds a rules out, the
+// runtime check guarantees the rest
+func (c *checker) narrow(t Type, a *ast.TypeAnnotation) Type {
+	k := AnnotationKind(a)
+	if t.Kind&k == t.Kind {
+		return t
+	}
+	out := kindType(t.Kind & k)
+	if out.Kind == KStruct {
+		out.Struct = c.lookupStruct(a.Name)
+	}
+	return out
+}
+
+func (c *checker) lookupStruct(name string) *ast.StructStatement {
+	if decls := c.a.structs[name]; len(decls) == 1 {
+		return decls[0]
+	}
+	return nil
+}
+
+// checkAnnot reports struct types nobody declared
+func (c *checker) checkAnnot(a *ast.TypeAnnotation) {
+	if a == nil || !a.IsStruct() || len(c.a.structs[a.Name]) > 0 {
+		return
+	}
+	c.errorf(a, "unknown type %s%s", a.Name, diag.DidYouMean(a.Name, sortedKeys(c.a.structs)))
+}
+
 func (c *checker) declare(sc *scope, name string, mutable bool, t Type, annot *ast.TypeAnnotation) *Symbol {
 	if sym, ok := sc.names[name]; ok {
 		sym.decls++
 		sym.Func = nil
 		sym.Mutable = mutable
-		sym.Type = kindType(AnnotationKind(annot))
+		sym.Type = c.annotType(annot)
 		sym.Annot = annot
 		return sym
 	}
 	switch {
 	case annot != nil && mutable:
-		t = kindType(AnnotationKind(annot))
+		t = c.annotType(annot)
 	case annot != nil:
-		t = narrow(t, annot)
+		t = c.narrow(t, annot)
 	case mutable:
 		t = unknown()
 	}
@@ -413,8 +464,9 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 	switch s := s.(type) {
 	case *ast.LetStatement:
 		t := c.expr(s.Value, sc)
+		c.checkAnnot(s.Type)
 		if !fits(t, s.Type) {
-			c.errorf(s, "type mismatch: %s expects %s, got %s", s.Name.Value, s.Type.Name, t.Kind)
+			c.errorf(s, "type mismatch: %s expects %s, got %s", s.Name.Value, s.Type.Name, t.Name())
 		}
 		// a redeclared name shares its slot with the old one, and the native
 		// backend checks assignments per slot, so both have to agree on the type
@@ -434,9 +486,16 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 	case *ast.ReturnStatement:
 		t := c.expr(s.ReturnValue, sc)
 		if c.fn != nil && !fits(t, c.fn.ReturnType) {
-			c.errorf(s, "type mismatch: %s %s, got %s", returnLabel(c.fn), c.fn.ReturnType.Name, t.Kind)
+			c.errorf(s, "type mismatch: %s %s, got %s", returnLabel(c.fn), c.fn.ReturnType.Name, t.Name())
 		}
 		return kindType(KNever)
+	case *ast.StructStatement:
+		for _, typ := range s.Types {
+			c.checkAnnot(typ)
+		}
+		t := Type{Kind: KStructDef, Arity: -1, Struct: s}
+		c.mod.Decls[s] = c.declare(sc, s.Name.Value, false, t, nil)
+		return t
 	case *ast.ImportStatement:
 		t := c.importStmt(s)
 		alias := ModuleName(s.Path.Value)
@@ -518,10 +577,99 @@ func (c *checker) assign(s *ast.AssignStatement, sc *scope, t Type) {
 	}
 	if !anyMutable || (cands[0].Direct && !cands[0].Sym.Mutable) {
 		c.errorf(s, "cannot assign to immutable binding %q", name)
+	} else if len(s.Fields) > 0 {
+		if cands[0].Direct {
+			c.fieldAssign(s, cands[0].Sym.Type, t)
+		}
 	} else if cands[0].Direct && !fits(t, cands[0].Sym.Annot) {
-		c.errorf(s, "type mismatch: %s expects %s, got %s", name, cands[0].Sym.Annot.Name, t.Kind)
+		c.errorf(s, "type mismatch: %s expects %s, got %s", name, cands[0].Sym.Annot.Name, t.Name())
 	}
 	c.mod.Assigns[s] = &Ref{Name: name, Candidates: cands}
+}
+
+// fieldAssign checks `x.a.b = v` as far as the types along the path are
+// known
+func (c *checker) fieldAssign(s *ast.AssignStatement, cur, v Type) {
+	for i, f := range s.Fields {
+		if cur.Kind != KStruct || cur.Struct == nil {
+			if cur.Kind.Known() && cur.Kind != KMap {
+				c.errorf(s, "cannot set field %s on %s", f.Value, cur.Name())
+			}
+			return
+		}
+		decl := cur.Struct
+		idx := fieldIndex(decl, f.Value)
+		if idx < 0 {
+			c.errorf(s, "%s has no field %q", decl.Name.Value, f.Value)
+			return
+		}
+		if i == len(s.Fields)-1 && !fits(v, decl.Types[idx]) {
+			c.errorf(s, "type mismatch: field %s of %s expects %s, got %s", f.Value, decl.Name.Value, decl.Types[idx].Name, v.Name())
+		}
+		cur = c.annotType(decl.Types[idx])
+	}
+}
+
+func fieldIndex(decl *ast.StructStatement, name string) int {
+	for i, f := range decl.Fields {
+		if f.Value == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// construct checks a call to a struct constructor, the same checks
+// object.StructDef.New makes at runtime
+func (c *checker) construct(node ast.Node, decl *ast.StructStatement, args []Type, names []*ast.Identifier) Type {
+	out := Type{Kind: KStruct, Arity: -1, Struct: decl}
+	if decl == nil {
+		return out
+	}
+	given := make([]*Type, len(decl.Fields))
+	if names == nil {
+		if len(args) != len(decl.Fields) {
+			c.errorf(node, "wrong number of arguments: expected %d, got %d", len(decl.Fields), len(args))
+			return out
+		}
+		for i := range args {
+			given[i] = &args[i]
+		}
+	} else {
+		for i, name := range names {
+			idx := fieldIndex(decl, name.Value)
+			if idx < 0 {
+				c.errorf(node, "%s has no field %q%s", decl.Name.Value, name.Value, diag.DidYouMean(name.Value, fieldNames(decl)))
+				return out
+			}
+			if given[idx] != nil {
+				c.errorf(node, "field %s given twice", name.Value)
+				return out
+			}
+			given[idx] = &args[i]
+		}
+		for i, g := range given {
+			if g == nil {
+				c.errorf(node, "missing field %s for %s", decl.Fields[i].Value, decl.Name.Value)
+				return out
+			}
+		}
+	}
+	for i, g := range given {
+		if !fits(*g, decl.Types[i]) {
+			c.errorf(node, "type mismatch: field %s of %s expects %s, got %s", decl.Fields[i].Value, decl.Name.Value, decl.Types[i].Name, g.Name())
+			break
+		}
+	}
+	return out
+}
+
+func fieldNames(decl *ast.StructStatement) []string {
+	names := make([]string, len(decl.Fields))
+	for i, f := range decl.Fields {
+		names[i] = f.Value
+	}
+	return names
 }
 
 func (c *checker) importStmt(s *ast.ImportStatement) Type {
@@ -672,7 +820,7 @@ func (c *checker) expr(e ast.Expression, sc *scope) Type {
 	case *ast.TryExpression:
 		t := c.expr(e.Value, sc)
 		if t.Kind != KNever && t.Kind&KResult == 0 {
-			c.errorf(e, "? expects RESULT, got %s", t.Kind)
+			c.errorf(e, "? expects RESULT, got %s", t.Name())
 		}
 		if c.fn != nil && c.fn.ReturnType != nil && AnnotationKind(c.fn.ReturnType)&KResult == 0 {
 			c.errorf(e, "type mismatch: %s %s, got RESULT", returnLabel(c.fn), c.fn.ReturnType.Name)
@@ -753,10 +901,20 @@ func (c *checker) identifier(id *ast.Identifier, sc *scope) Type {
 }
 
 func (c *checker) call(node ast.Node, callee Type, args []Type) Type {
+	var names []*ast.Identifier
+	if ce, ok := node.(*ast.CallExpression); ok {
+		names = ce.ArgNames
+	}
 	if !callee.Kind.Known() {
 		return unknown()
 	}
+	if names != nil && callee.Kind != KStructDef {
+		c.errorf(node, "named arguments only work with struct constructors, got %s", callee.Name())
+		return unknown()
+	}
 	switch callee.Kind {
+	case KStructDef:
+		return c.construct(node, callee.Struct, args, names)
 	case KFunction:
 		if callee.Arity >= 0 && callee.Arity != len(args) {
 			c.errorf(node, "wrong number of arguments: expected %d, got %d", callee.Arity, len(args))
@@ -768,14 +926,14 @@ func (c *checker) call(node ast.Node, callee Type, args []Type) Type {
 		}
 		for i, arg := range args {
 			if a := paramAnnot(lit, i); !fits(arg, a) {
-				c.errorf(node, "type mismatch: parameter %s expects %s, got %s", lit.Parameters[i].Value, a.Name, arg.Kind)
+				c.errorf(node, "type mismatch: parameter %s expects %s, got %s", lit.Parameters[i].Value, a.Name, arg.Name())
 				break
 			}
 		}
 		if lit.ReturnType == nil {
 			return unknown()
 		}
-		return kindType(AnnotationKind(lit.ReturnType))
+		return c.annotType(lit.ReturnType)
 	case KBuiltin:
 		s := callee.Builtin
 		if s == nil {
@@ -832,6 +990,18 @@ func (c *checker) index(e *ast.IndexExpression, left, idx Type) Type {
 }
 
 func (c *checker) member(e *ast.MemberExpression, obj Type) Type {
+	if obj.Kind == KStruct {
+		decl := obj.Struct
+		if decl == nil {
+			return unknown()
+		}
+		idx := fieldIndex(decl, e.Property.Value)
+		if idx < 0 {
+			c.errorf(e, "%s has no field %q%s", decl.Name.Value, e.Property.Value, diag.DidYouMean(e.Property.Value, fieldNames(decl)))
+			return unknown()
+		}
+		return c.annotType(decl.Types[idx])
+	}
 	if !obj.Kind.Known() {
 		return unknown()
 	}
@@ -839,7 +1009,7 @@ func (c *checker) member(e *ast.MemberExpression, obj Type) Type {
 		return unknown()
 	}
 	if obj.Kind != KModule {
-		c.errorf(e, "member access expects module or map, got %s", obj.Kind)
+		c.errorf(e, "member access expects module, map or struct, got %s", obj.Kind)
 		return unknown()
 	}
 	if obj.Module == nil {

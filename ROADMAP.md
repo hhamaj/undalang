@@ -198,6 +198,9 @@ Success criteria:
 ### Phase 4 — Systems-Level Capabilities
 Goal: progressively add low-level control for advanced users.
 
+Status:
+- structs: `struct Point { x: number, y: number }`, positional and named construction, field access, struct names as types, field assignment that copies (`p.x = 1`, also for map keys), checked statically and at runtime in both backends
+
 Potential deliverables:
 - structs and user-defined data layouts
 - element types for collections (`array[int]`, `map[string, int]`), designed together with user-defined types

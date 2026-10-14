@@ -26,12 +26,14 @@ const (
 	KBuiltin
 	KModule
 	KResult
+	KStruct
+	KStructDef
 
 	KNever   Kind = 0
 	KNumber       = KInt | KFloat
 	KCall         = KFunction | KBuiltin
 	KHash         = KInt | KString | KBool | KNil
-	KUnknown      = KInt | KFloat | KString | KBool | KNil | KArray | KMap | KFunction | KBuiltin | KModule | KResult
+	KUnknown      = KInt | KFloat | KString | KBool | KNil | KArray | KMap | KFunction | KBuiltin | KModule | KResult | KStruct | KStructDef
 )
 
 var kindNames = []struct {
@@ -41,9 +43,13 @@ var kindNames = []struct {
 	{KInt, "INTEGER"}, {KFloat, "FLOAT"}, {KString, "STRING"}, {KBool, "BOOLEAN"},
 	{KNil, "NIL"}, {KArray, "ARRAY"}, {KMap, "MAP"}, {KFunction, "FUNCTION"},
 	{KBuiltin, "BUILTIN"}, {KModule, "MODULE"}, {KResult, "RESULT"},
+	{KStruct, "STRUCT VALUE"}, {KStructDef, "STRUCT"},
 }
 
-func (k Kind) Known() bool { return bits.OnesCount16(uint16(k)) == 1 }
+// Known reports a single statically known kind. struct values don't count:
+// their runtime type name is the struct's name, which the generic checks
+// can't spell, so those leave them to the runtime
+func (k Kind) Known() bool { return bits.OnesCount16(uint16(k)) == 1 && k != KStruct }
 
 // String uses the runtime's type names so static and runtime messages match
 func (k Kind) String() string {
@@ -73,13 +79,28 @@ type Type struct {
 	// Func is set for a known function literal, calls check their arguments
 	// against its parameter types
 	Func *ast.FunctionLiteral
+	// Struct is the declaration behind a KStruct value or a KStructDef
+	// constructor, when it's known
+	Struct *ast.StructStatement
+}
+
+// Name spells the type the way the runtime does, so a struct value is its
+// struct's name
+func (t Type) Name() string {
+	if t.Kind == KStruct && t.Struct != nil {
+		return t.Struct.Name.Value
+	}
+	return t.Kind.String()
 }
 
 // AnnotationKind turns a type annotation into the kinds it accepts, nil
 // means anything goes
 func AnnotationKind(t *ast.TypeAnnotation) Kind {
-	if t == nil {
+	if t == nil || t.Name == "any" {
 		return KUnknown
+	}
+	if t.IsStruct() {
+		return KStruct
 	}
 	var k Kind
 	for _, name := range ast.TypeNames[t.Name] {
@@ -95,17 +116,13 @@ func AnnotationKind(t *ast.TypeAnnotation) Kind {
 // fits reports whether a value of type t could fit annotation a. a value
 // whose kinds don't overlap the annotation at all can never fit
 func fits(t Type, a *ast.TypeAnnotation) bool {
-	return a == nil || t.Kind == KNever || t.Kind&AnnotationKind(a) != 0
-}
-
-// narrow keeps what we know about t but drops the kinds a rules out, the
-// runtime check guarantees the rest
-func narrow(t Type, a *ast.TypeAnnotation) Type {
-	k := AnnotationKind(a)
-	if t.Kind&k == t.Kind {
-		return t
+	if a == nil || t.Kind == KNever {
+		return true
 	}
-	return kindType(t.Kind & k)
+	if a.IsStruct() && t.Kind == KStruct && t.Struct != nil {
+		return t.Struct.Name.Value == a.Name
+	}
+	return t.Kind&AnnotationKind(a) != 0
 }
 
 // ModuleType lists the module members known at compile time
@@ -126,7 +143,7 @@ func join(a, b Type) Type {
 	if b.Kind == KNever {
 		return a
 	}
-	if a.Kind == b.Kind && a.Arity == b.Arity && a.Builtin == b.Builtin && a.Module == b.Module && a.Func == b.Func {
+	if a.Kind == b.Kind && a.Arity == b.Arity && a.Builtin == b.Builtin && a.Module == b.Module && a.Func == b.Func && a.Struct == b.Struct {
 		return a
 	}
 	return kindType(a.Kind | b.Kind)

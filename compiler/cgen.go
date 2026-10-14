@@ -75,6 +75,7 @@ type gen struct {
 	decls    strings.Builder
 	defs     strings.Builder
 	builtins map[string]bool
+	structs  int
 }
 
 func (g *gen) module(mod *semantic.Module) {
@@ -188,11 +189,52 @@ func (f *fgen) loc(node ast.Node) {
 // checkType emits the runtime check for an annotation. it uses whatever
 // location is current, callers set it first when they need a different one
 func (f *fgen) checkType(v string, t *ast.TypeAnnotation, what string) {
+	switch {
+	case t.Name == "any":
+	case t.IsStruct():
+		f.line("u_check_struct(%s, %s, %s);", v, cString(t.Name), cString(what+" "+t.Name))
+	default:
+		f.line("u_check_type(%s, %s, %s);", v, typeMask(t), cString(what+" "+t.Name))
+	}
+}
+
+func typeMask(t *ast.TypeAnnotation) string {
 	tags := make([]string, 0, len(ast.TypeNames[t.Name]))
 	for _, name := range ast.TypeNames[t.Name] {
 		tags = append(tags, "(1u << "+tagNames[name]+")")
 	}
-	f.line("u_check_type(%s, %s, %s);", v, strings.Join(tags, " | "), cString(what+" "+t.Name))
+	return strings.Join(tags, " | ")
+}
+
+// annotC renders an annotation as a UAnnot initializer
+func annotC(t *ast.TypeAnnotation) string {
+	switch {
+	case t == nil || t.Name == "any":
+		return "{0, NULL, NULL}"
+	case t.IsStruct():
+		return fmt.Sprintf("{0, %s, %s}", cString(t.Name), cString(t.Name))
+	}
+	return fmt.Sprintf("{%s, NULL, %s}", typeMask(t), cString(t.Name))
+}
+
+// structDef emits the static definition for a struct statement and returns
+// its C name
+func (g *gen) structDef(s *ast.StructStatement) string {
+	g.structs++
+	name := fmt.Sprintf("sdef_%d", g.structs)
+	fields := make([]string, len(s.Fields))
+	types := make([]string, len(s.Fields))
+	for i, f := range s.Fields {
+		fields[i] = cString(f.Value)
+		types[i] = annotC(s.Types[i])
+	}
+	if len(fields) == 0 {
+		fields, types = []string{"NULL"}, []string{"{0, NULL, NULL}"}
+	}
+	fmt.Fprintf(&g.decls, "static const char *%s_fields[] = {%s};\n", name, strings.Join(fields, ", "))
+	fmt.Fprintf(&g.decls, "static const UAnnot %s_types[] = {%s};\n", name, strings.Join(types, ", "))
+	fmt.Fprintf(&g.decls, "static UStructDef %s = {%s, %d, %s_fields, %s_types};\n", name, cString(s.Name.Value), len(s.Fields), name, name)
+	return name
 }
 
 func returnLabel(lit *ast.FunctionLiteral) string {
@@ -236,6 +278,18 @@ func (f *fgen) stmt(s ast.Statement) string {
 		return v
 	case *ast.AssignStatement:
 		v := f.expr(s.Value)
+		if len(s.Fields) > 0 {
+			// read the current value, build the changed copy, assign that
+			cur := f.readRef(f.mod.Assigns[s], s.Name)
+			names := make([]string, len(s.Fields))
+			for i, field := range s.Fields {
+				names[i] = cString(field.Value)
+			}
+			t := f.temp()
+			f.loc(s)
+			f.line("UValue %s = u_with_fields(%s, %d, (const char *[]){%s}, %s);", t, cur, len(names), strings.Join(names, ", "), v)
+			v = t
+		}
 		f.assign(s, v)
 		return v
 	case *ast.ReturnStatement:
@@ -246,6 +300,11 @@ func (f *fgen) stmt(s ast.Statement) string {
 		}
 		f.line("return %s;", v)
 		return "uv_nil()"
+	case *ast.StructStatement:
+		t := f.temp()
+		f.line("UValue %s = uv_sdef(&%s);", t, f.g.structDef(s))
+		f.line("S[%d] = %s;", f.mod.Decls[s].Slot, t)
+		return t
 	case *ast.ImportStatement:
 		t := f.temp()
 		imp := f.mod.Imports[s]
@@ -363,7 +422,12 @@ func (f *fgen) assignChecked(s *ast.AssignStatement, sym *semantic.Symbol, lv, v
 }
 
 func (f *fgen) identifier(id *ast.Identifier) string {
-	ref := f.mod.Refs[id]
+	return f.readRef(f.mod.Refs[id], id)
+}
+
+// readRef loads whatever ref resolves to at runtime. at is where an
+// "identifier not found" error points
+func (f *fgen) readRef(ref *semantic.Ref, at ast.Node) string {
 	t := f.temp()
 	if len(ref.Candidates) == 0 {
 		f.g.builtins[ref.Builtin] = true
@@ -390,7 +454,7 @@ func (f *fgen) identifier(id *ast.Identifier) string {
 	if ref.Builtin != "" {
 		f.line("%s = u_global_builtin(%s);", t, cString(ref.Builtin))
 	} else {
-		f.loc(id)
+		f.loc(at)
 		f.line("u_panic(\"identifier not found: %s\");", ref.Name)
 	}
 	for ; opened > 0; opened-- {
@@ -524,6 +588,17 @@ func (f *fgen) expr(e ast.Expression) string {
 		args := make([]string, 0, len(e.Arguments))
 		for _, a := range e.Arguments {
 			args = append(args, f.expr(a))
+		}
+		if e.ArgNames != nil {
+			names := make([]string, len(e.ArgNames))
+			for i, n := range e.ArgNames {
+				names[i] = cString(n.Value)
+			}
+			t := f.temp()
+			f.loc(e)
+			f.line("UValue %s = u_call_named(%s, %d, (UValue[]){%s}, (const char *[]){%s});",
+				t, callee, len(args), strings.Join(args, ", "), strings.Join(names, ", "))
+			return t
 		}
 		return f.call(e, e.Function, callee, args)
 	case *ast.TryExpression:

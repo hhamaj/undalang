@@ -111,7 +111,7 @@ fn add(a: int, b: int) -> int {
 let label = fn(name: string, value) -> string { name + ": " + type(value) }
 ```
 
-The types are `int`, `float`, `number` (int or float), `string`, `bool`, `nil`, `array`, `map`, `fn` (functions and builtins), `module`, `result` and `any`.
+The types are `int`, `float`, `number` (int or float), `string`, `bool`, `nil`, `array`, `map`, `fn` (functions and builtins), `module`, `result`, `any` and the name of any struct.
 
 `unda check` reports mismatches it can prove without running the program, and typed bindings and parameters give it more to work with:
 
@@ -164,6 +164,27 @@ fn load_config(path: string) -> result {
 ```
 
 `?` applies to the expression right before it, so `f(x)? + 1` unwraps `f(x)` but `x |> f?` unwraps `f`; write `(x |> f)?` to unwrap a pipeline. Using `?` outside a function, where there is nothing to return to, makes an `err` a runtime error (`unhandled err(...)`). A function with a return type other than `result` or `any` can't use `?`, and `unda check` says so.
+
+## Structs
+
+A struct groups named fields. Field types are optional, like everywhere else. Build a value by calling the struct with the fields in order, or by name:
+
+```unda
+struct Point {
+    x: number
+    y: number
+}
+
+let p = Point(1, 2)
+let q = Point(y: 4, x: 3)
+println(p.x, q)             // 1 Point(x: 3, y: 4)
+
+fn dist2(a: Point, b: Point) -> number {
+    (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)
+}
+```
+
+Struct names start with an uppercase letter and work as types (`p: Point`). Structs are values: `r.x = 5` on a `let mut` binding gives `r` a copy with that field changed, and anything else holding the old value keeps it. The same works for string keys of maps (`cfg.db.port = 5432`). Two struct values are equal when they come from the same declaration and their fields are equal.
 
 ## Loops
 
@@ -246,3 +267,4 @@ Standard modules:
 - `examples/phase1_import_fileio.unda`: local module import and file I/O
 - `examples/phase3_types.unda`: type annotations
 - `examples/phase3_results.unda`: `ok`/`err` results and `?`
+- `examples/phase4_structs.unda`: structs
