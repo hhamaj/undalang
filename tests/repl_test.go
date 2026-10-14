@@ -26,7 +26,7 @@ func TestREPLMultiLineInput(t *testing.T) {
 
 	got := strings.ReplaceAll(out.String(), repl.ContinuePrompt, "|")
 	got = strings.ReplaceAll(got, repl.Prompt, ">")
-	// Definitions echo their value, as single-line input always did.
+	// definitions echo their value like single-line input always did
 	want := ">||fn add(a, b) {\nreturn (a + b)\n}\n>5\n>|3\n>|>|[1, 2]\n>"
 	if got != want {
 		t.Fatalf("stdout\ngot  %q\nwant %q", got, want)

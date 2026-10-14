@@ -55,9 +55,9 @@ func Start(in io.Reader, out io.Writer, errOut io.Writer) {
 	}
 }
 
-// readInput reads one complete entry, prompting for continuation lines
-// while the input is unfinished. An empty continuation line submits the
-// input as is so mistakes can be abandoned.
+// readInput reads one complete entry and keeps asking for continuation lines
+// while the input is unfinished. an empty continuation line submits whatever
+// is there so you can bail out of mistakes
 func readInput(scanner *bufio.Scanner, out io.Writer) (string, bool) {
 	fmt.Fprint(out, Prompt)
 	if !scanner.Scan() {
@@ -78,8 +78,8 @@ func readInput(scanner *bufio.Scanner, out io.Writer) (string, bool) {
 	return source, true
 }
 
-// Incomplete reports whether source needs more lines: unclosed brackets,
-// an unterminated string, or a trailing operator.
+// Incomplete reports whether source needs more lines, like unclosed brackets,
+// an unterminated string or a trailing operator
 func Incomplete(source string) bool {
 	l := lexer.New(source)
 	depth := 0

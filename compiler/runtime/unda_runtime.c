@@ -1,11 +1,11 @@
 /*
- * Unda C runtime. This file is embedded by the Go compiler and prepended to
- * every generated program, so the output is a single translation unit.
+ * the Unda C runtime. the Go compiler embeds this file and puts it in front
+ * of every generated program so the output is one translation unit
  *
- * Semantics (operators, error messages, value formatting) mirror the Go
- * interpreter exactly; the differential tests in tests/native_test.go rely
- * on that. Unda values live on a garbage-collected heap (see the
- * "garbage collector" section); temporary C buffers use plain malloc.
+ * semantics (operators, error messages, value formatting) match the Go
+ * interpreter exactly, the differential tests in tests/native_test.go depend
+ * on that. Unda values live on a garbage collected heap (see the garbage
+ * collector section), temporary C buffers use plain malloc
  */
 #define _GNU_SOURCE
 #pragma GCC diagnostic ignored "-Wunused-function"
@@ -47,7 +47,7 @@ typedef UValue (*UCode)(UFrame *env, int argc, UValue *argv);
 struct UFn { UCode code; UFrame *env; int arity; const char *name; const char *inspect; };
 struct UMod { const char *name; int count; const char **names; UValue *values; };
 
-/* ---------- errors and locations ---------- */
+/* errors and locations */
 
 static const char *u_file = NULL;
 static int u_line = 0, u_col = 0;
@@ -81,7 +81,7 @@ static void u_oom(void) {
     exit(1);
 }
 
-/* Plain allocations for temporary C buffers that are released with free(). */
+/* plain allocations for temporary C buffers that get released with free() */
 static void *u_xalloc(size_t n) {
     void *p = calloc(1, n ? n : 1);
     if (!p) u_oom();
@@ -94,17 +94,18 @@ static void *u_xrealloc(void *p, size_t n) {
     return p;
 }
 
-/* ---------- garbage collector ----------
+/*
+ * garbage collector
  *
- * A conservative mark-and-sweep collector. Every Unda value is allocated
- * with u_alloc, which records the block in a table. A collection marks
- * blocks reachable from the roots, treating every aligned word as a
- * potential pointer (including pointers into the middle of a block):
- *   - the Unda thread's stack, with callee-saved registers spilled onto it,
- *   - static slots registered by the generated code (u_register_roots).
- * Unmarked blocks are freed. A collection runs once the bytes allocated
- * since the last one exceed the live heap size (minimum 8 MiB, tunable with
- * UNDA_GC_THRESHOLD).
+ * a conservative mark and sweep collector. every Unda value is allocated with
+ * u_alloc which records the block in a table. a collection marks the blocks
+ * reachable from the roots and treats every aligned word as a possible
+ * pointer, even ones into the middle of a block. the roots are
+ *   - the Unda thread's stack, with callee-saved registers spilled onto it
+ *   - static slots the generated code registers (u_register_roots)
+ * unmarked blocks get freed. a collection runs once the bytes allocated since
+ * the last one go past the live heap size (8 MiB minimum, UNDA_GC_THRESHOLD
+ * changes it)
  */
 
 typedef struct { size_t size; size_t mark; } UGcHeader;
@@ -136,7 +137,7 @@ static int u_gc_cmp(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-/* Returns the block containing address w (blocks must be sorted). */
+/* returns the block that contains address w, blocks have to be sorted */
 static char *u_gc_find(uintptr_t w) {
     if (u_gc_count == 0 || w < (uintptr_t)u_gc_blocks[0]) return NULL;
     size_t lo = 0, hi = u_gc_count;
@@ -177,7 +178,7 @@ __attribute__((noinline)) static void u_gc_scan_stack(void) {
 }
 
 __attribute__((noinline)) static void u_gc_collect(void) {
-    /* Spill callee-saved registers so the stack scan sees them. */
+    /* spill callee-saved registers so the stack scan can see them */
     __builtin_unwind_init();
     jmp_buf regs;
     setjmp(regs);
@@ -226,7 +227,7 @@ static void *u_alloc(size_t n) {
     return p;
 }
 
-/* Grows a GC block; the old block becomes garbage. */
+/* grows a GC block, the old one becomes garbage */
 static void *u_realloc(void *p, size_t n) {
     if (!p) return u_alloc(n);
     size_t old = U_GC_HEADER(p)->size;
@@ -236,7 +237,7 @@ static void *u_realloc(void *p, size_t n) {
     return q;
 }
 
-/* ---------- string builder ---------- */
+/* string builder */
 
 typedef struct { char *buf; size_t len, cap; } USb;
 
@@ -268,7 +269,7 @@ static void sb_printf(USb *sb, const char *fmt, ...) {
     sb->len += (size_t)n;
 }
 
-/* ---------- constructors ---------- */
+/* constructors */
 
 static UStr *u_str_new(const char *s, size_t n) {
     UStr *str = u_alloc(sizeof(UStr) + n + 1);
@@ -334,7 +335,7 @@ static inline UFrame *u_up(UFrame *f, int depth) {
     return f;
 }
 
-/* ---------- type names and truthiness ---------- */
+/* type names and truthiness */
 
 static const char *u_type_name(UValue v) {
     switch (v.tag) {
@@ -358,10 +359,12 @@ static inline bool u_truthy(UValue v) {
     return true;
 }
 
-/* ---------- UTF-8 helpers ---------- */
+/* UTF-8 helpers */
 
-/* Decodes one rune like Go's utf8.DecodeRuneInString: invalid input yields
- * U+FFFD with size 1. */
+/*
+ * decodes one rune like Go's utf8.DecodeRuneInString, invalid input gives
+ * U+FFFD with size 1
+ */
 static int32_t u_utf8_decode(const unsigned char *s, size_t n, int *size) {
     if (n == 0) { *size = 0; return 0xFFFD; }
     unsigned char c = s[0];
@@ -390,10 +393,12 @@ static void u_utf8_encode(USb *sb, int32_t r) {
     else { b[0] = (char)(0xF0 | (r >> 18)); b[1] = (char)(0x80 | ((r >> 12) & 0x3F)); b[2] = (char)(0x80 | ((r >> 6) & 0x3F)); b[3] = (char)(0x80 | (r & 0x3F)); sb_putn(sb, b, 4); }
 }
 
-/* ---------- float formatting (Go's strconv shortest representation) ---------- */
+/* float formatting, same as Go's strconv shortest representation */
 
-/* Produces the shortest decimal digits that round-trip to v.
- * digits receives nd digits; the value is 0.d1d2... * 10^dp. */
+/*
+ * produces the shortest decimal digits that round-trip to v. digits gets nd
+ * digits and the value is 0.d1d2... * 10^dp
+ */
 static void u_shortest(double v, char *digits, int *nd, int *dp) {
     char buf[40];
     for (int prec = 0; prec < 17; prec++) {
@@ -431,7 +436,7 @@ static void u_fmt_f(USb *sb, const char *d, int nd, int dp) {
     }
 }
 
-/* Matches fmt.Sprintf("%g", v). */
+/* same as fmt.Sprintf("%g", v) */
 static void u_fmt_float(USb *sb, double v) {
     if (isnan(v)) { sb_puts(sb, "NaN"); return; }
     if (isinf(v)) { sb_puts(sb, v > 0 ? "+Inf" : "-Inf"); return; }
@@ -439,13 +444,13 @@ static void u_fmt_float(USb *sb, double v) {
     char d[40]; int nd, dp;
     u_shortest(v, d, &nd, &dp);
     int exp = (v == 0) ? 0 : dp - 1;
-    /* strconv uses precision 6 for the %e decision in shortest mode. */
+    /* strconv uses precision 6 for the %e decision in shortest mode */
     int eprec = 6;
     if (exp < -4 || exp >= eprec) u_fmt_e(sb, d, nd, dp);
     else u_fmt_f(sb, d, nd, dp);
 }
 
-/* ---------- inspect ---------- */
+/* inspect */
 
 static void u_inspect_to(USb *sb, UValue v);
 
@@ -514,7 +519,7 @@ static void u_inspect_to(USb *sb, UValue v) {
     }
 }
 
-/* ---------- maps ---------- */
+/* maps */
 
 static bool u_hashable(UValue v) {
     return v.tag == U_INT || v.tag == U_STR || v.tag == U_BOOL || v.tag == U_NIL;
@@ -572,8 +577,10 @@ static void u_map_reindex(UMap *m, size_t icap) {
     }
 }
 
-/* Inserting an existing key replaces both key and value, like the
- * interpreter's pairs[hash] = MapPair{key, value}. */
+/*
+ * inserting a key that already exists replaces both key and value, like the
+ * interpreter's pairs[hash] = MapPair{key, value}
+ */
 static void u_map_set(UMap *m, UValue key, UValue value) {
     int64_t idx = u_map_find(m, key);
     if (idx >= 0) { m->entries[idx].key = key; m->entries[idx].value = value; return; }
@@ -603,7 +610,7 @@ static void u_map_literal_key(UValue key) {
     if (!u_hashable(key)) u_panic("unusable as map key: %s", u_type_name(key));
 }
 
-/* ---------- equality (objectsEqual) ---------- */
+/* equality (objectsEqual) */
 
 static bool u_equal(UValue a, UValue b) {
     switch (a.tag) {
@@ -630,7 +637,7 @@ static bool u_equal(UValue a, UValue b) {
     }
 }
 
-/* ---------- operators ---------- */
+/* operators */
 
 enum { OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_LT, OP_GT, OP_LE, OP_GE, OP_EQ, OP_NE, OP_AND, OP_OR };
 static const char *u_op_names[] = {"+", "-", "*", "/", "%", "<", ">", "<=", ">=", "==", "!=", "&&", "||"};
@@ -718,7 +725,7 @@ static UValue u_index(UValue l, UValue i) {
         return idx < 0 ? uv_nil() : l.as.m->entries[idx].value;
     }
     if (l.tag == U_STR && i.tag == U_INT) {
-        /* Strings index by character (code point), not byte. */
+        /* strings index by character (code point) not byte */
         UStr *s = l.as.s;
         if (i.as.i < 0) return uv_nil();
         int64_t n = 0;
@@ -739,7 +746,7 @@ static UValue u_index(UValue l, UValue i) {
 
 static size_t *u_sorted_entries(UMap *m);
 
-/* Lists what a for loop binds; see evaluator.IterationItems. */
+/* lists what a for loop binds, see evaluator.IterationItems */
 static void u_iter(UValue v, int vars, UArr **first, UArr **second) {
     UArr *a = u_arr_new(0), *b = vars == 2 ? u_arr_new(0) : NULL;
     switch (v.tag) {
@@ -803,7 +810,7 @@ static UValue u_call(UValue f, int argc, UValue *argv) {
     return result;
 }
 
-/* ---------- builtin helpers ---------- */
+/* builtin helpers */
 
 #define U_ARGC(name, n) do { if (argc != (n)) u_panic("%s expects %d %s, got %d", name, n, (n) == 1 ? "argument" : "arguments", argc); } while (0)
 #define U_BUILTIN_FN(fn) static UValue fn(UFrame *env_, int argc, UValue *argv)
@@ -831,7 +838,7 @@ static void u_go_quote(USb *sb, const char *s, size_t n) {
     sb_putc(sb, '"');
 }
 
-/* Go's syscall error strings are glibc's with a lowercase first letter. */
+/* Go's syscall error strings are just glibc's with a lowercase first letter */
 static void u_errno_text(USb *sb, int err) {
     const char *msg = strerror(err);
     if (msg[0] >= 'A' && msg[0] <= 'Z') { sb_putc(sb, (char)(msg[0] + 32)); sb_puts(sb, msg + 1); }
@@ -847,7 +854,7 @@ static void u_file_error(const char *builtin, const char *op, UStr *path, int er
     u_panic("%s", sb.buf);
 }
 
-/* ---------- global builtins ---------- */
+/* global builtins */
 
 static void u_join_args(USb *sb, int argc, UValue *argv) {
     for (int i = 0; i < argc; i++) {
@@ -941,7 +948,7 @@ static UValue u_write_common(const char *name, int argc, UValue *argv, const cha
 U_BUILTIN_FN(ub_write_file) { (void)env_; return u_write_common("write_file", argc, argv, "wb"); }
 U_BUILTIN_FN(ub_append_file) { (void)env_; return u_write_common("append_file", argc, argv, "ab"); }
 
-/* ---------- strings ---------- */
+/* strings */
 
 static bool u_has_prefix(UStr *s, UStr *p) { return p->len <= s->len && memcmp(s->data, p->data, p->len) == 0; }
 static bool u_has_suffix(UStr *s, UStr *p) { return p->len <= s->len && memcmp(s->data + s->len - p->len, p->data, p->len) == 0; }
@@ -992,8 +999,10 @@ static UValue u_strings_join(int argc, UValue *argv) {
 
 U_BUILTIN_FN(us_join) { (void)env_; return u_strings_join(argc, argv); }
 
-/* Simple case mapping for ASCII, Latin-1, Latin Extended-A, Greek and
- * Cyrillic, covering what unicode.ToUpper/ToLower do for those blocks. */
+/*
+ * simple case mapping for ASCII, Latin-1, Latin Extended-A, Greek and
+ * Cyrillic. covers what unicode.ToUpper/ToLower do for those blocks
+ */
 static int32_t u_to_upper(int32_t r) {
     if (r >= 'a' && r <= 'z') return r - 32;
     if (r < 0x80) return r;
@@ -1102,7 +1111,7 @@ U_BUILTIN_FN(us_replace) {
     UStr *repl = u_want_str(argv[2], "strings.replace new");
     USb sb = {0};
     if (old->len == 0) {
-        /* Go inserts the replacement before every rune and at the end. */
+        /* Go puts the replacement before every rune and at the end */
         size_t i = 0;
         while (i < s->len) {
             int size;
@@ -1152,7 +1161,7 @@ U_BUILTIN_FN(us_split) {
     return uv_arrv(out);
 }
 
-/* ---------- arrays ---------- */
+/* arrays */
 
 static UArr *u_want_arr(UValue v, const char *fmt) {
     if (v.tag != U_ARR) u_panic(fmt, u_type_name(v));
@@ -1263,7 +1272,7 @@ U_BUILTIN_FN(ua_reduce) {
     return acc;
 }
 
-/* ---------- maps module ---------- */
+/* maps module */
 
 static UMap *u_want_map(UValue v, const char *fmt) {
     if (v.tag != U_MAP) u_panic(fmt, u_type_name(v));
@@ -1314,7 +1323,7 @@ static int u_cmp_keyorder(const void *a, const void *b) {
     return u_cmp_sb(&((const UKeyOrder *)a)->text, &((const UKeyOrder *)b)->text);
 }
 
-/* Entry indexes sorted by the key's Inspect text, like maps.keys/values. */
+/* entry indexes sorted by the key's Inspect text, same as maps.keys/values */
 static size_t *u_sorted_entries(UMap *m) {
     UKeyOrder *order = u_xalloc((m->len ? m->len : 1) * sizeof(UKeyOrder));
     for (size_t i = 0; i < m->len; i++) { u_inspect_to(&order[i].text, m->entries[i].key); order[i].idx = i; }
@@ -1347,7 +1356,7 @@ U_BUILTIN_FN(um_values) {
     return uv_arrv(a);
 }
 
-/* ---------- json ---------- */
+/* JSON */
 
 static int u_cmp_entry_key(const void *a, const void *b) {
     const UEntry *x = *(UEntry *const *)a, *y = *(UEntry *const *)b;
@@ -1391,7 +1400,7 @@ static void u_json_string(USb *sb, const char *s, size_t n) {
     sb_putc(sb, '"');
 }
 
-/* Matches encoding/json's float encoder. */
+/* same as encoding/json's float encoder */
 static bool u_json_float(USb *sb, double v, USb *err) {
     if (isnan(v) || isinf(v)) {
         USb tmp = {0};
@@ -1600,7 +1609,7 @@ static bool uj_number(UJson *j, UValue *out) {
     buf[len] = 0;
     double v = strtod(buf, NULL);
     if (trunc(v) == v) {
-        /* int64(v) on amd64 yields INT64_MIN when out of range. */
+        /* int64(v) on amd64 gives INT64_MIN when it's out of range */
         if (v >= 9223372036854775808.0 || v < -9223372036854775808.0) *out = uv_int(INT64_MIN);
         else *out = uv_int((int64_t)v);
     } else {
@@ -1692,7 +1701,7 @@ U_BUILTIN_FN(uj_parse) {
     return v;
 }
 
-/* ---------- math ---------- */
+/* math */
 
 static double u_want_num(UValue v, const char *name) {
     if (!u_is_num(v)) u_panic("%s expects number, got %s", name, u_type_name(v));
@@ -1729,7 +1738,7 @@ U_MATH2(umath_max, "math.max", u_go_max(x, y))
 U_MATH2(umath_min, "math.min", u_go_min(x, y))
 U_MATH2(umath_pow, "math.pow", pow(x, y))
 
-/* ---------- time ---------- */
+/* time */
 
 U_BUILTIN_FN(ut_now) {
     (void)env_; (void)argv;
@@ -1762,7 +1771,7 @@ U_BUILTIN_FN(ut_format) {
     u_panic("time.format is not supported by the C backend yet");
 }
 
-/* ---------- process / shell ---------- */
+/* process and shell */
 
 U_BUILTIN_FN(up_args) {
     (void)env_; (void)argv;
@@ -1785,7 +1794,10 @@ static bool u_is_executable(const char *path) {
     return stat(path, &st) == 0 && !S_ISDIR(st.st_mode) && (st.st_mode & 0111);
 }
 
-/* Resolves a command like exec.LookPath; returns NULL and fills err on failure. */
+/*
+ * resolves a command like exec.LookPath. returns NULL and fills err if it
+ * fails
+ */
 static char *u_lookpath(const char *name, USb *err) {
     if (strchr(name, '/')) {
         struct stat st;
@@ -1883,7 +1895,7 @@ U_BUILTIN_FN(ush_run) {
     return u_run_command("shell.run", cargv);
 }
 
-/* ---------- module tables ---------- */
+/* module tables */
 
 typedef struct { const char *name; UCode code; const char *qualified; } UBuiltinDef;
 
@@ -1950,8 +1962,10 @@ static UValue u_global_builtin(const char *name) {
     u_panic("identifier not found: %s", name);
 }
 
-/* Builds a module value from a top-level frame, skipping bindings that
- * never ran (the interpreter only exports names it actually defined). */
+/*
+ * builds a module value from a top-level frame and skips bindings that never
+ * ran, the interpreter only exports names it actually defined
+ */
 static UValue u_module_from_frame(const char *name, int count, const char **names, const int *slots, UFrame *frame) {
     UMod *m = u_alloc(sizeof(UMod));
     m->name = name;
@@ -1967,7 +1981,7 @@ static UValue u_module_from_frame(const char *name, int count, const char **name
     return uv_modv(m);
 }
 
-/* ---------- entry point ---------- */
+/* entry point */
 
 static UValue u_program_main(void);
 static void u_register_roots(void);
@@ -1990,7 +2004,7 @@ static void *u_main_thread(void *arg) {
 int main(int argc, char **argv) {
     u_argc = argc;
     u_argv = argv;
-    /* Run on a thread with a large stack so deep (bounded) recursion fits. */
+    /* run on a thread with a big stack so deep (bounded) recursion fits */
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setstacksize(&attr, (size_t)1 << 30);

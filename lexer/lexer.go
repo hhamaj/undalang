@@ -171,7 +171,7 @@ func (l *Lexer) peekChar() byte {
 	return l.input[l.readPosition]
 }
 
-// skipWhitespace also skips `//` line comments.
+// skipWhitespace skips `//` line comments too
 func (l *Lexer) skipWhitespace() {
 	for {
 		switch {
@@ -209,7 +209,7 @@ func (l *Lexer) readNumber() (string, token.Type) {
 			l.readChar()
 		}
 	}
-	// Exponent: 1e5, 2.5e-3, 3E+2.
+	// exponent part like 1e5, 2.5e-3 or 3E+2
 	if l.ch == 'e' || l.ch == 'E' {
 		next := l.peekChar()
 		signed := (next == '+' || next == '-') && l.readPosition+1 < len(l.input) && isDigit(l.input[l.readPosition+1])
@@ -228,8 +228,8 @@ func (l *Lexer) readNumber() (string, token.Type) {
 	return l.input[pos:l.position], typ
 }
 
-// readString reads a string literal; ok is false when the input ends
-// before the closing quote.
+// readString reads a string literal. ok is false if the input ends before the
+// closing quote
 func (l *Lexer) readString() (value string, ok bool) {
 	l.readChar()
 	pos := l.position

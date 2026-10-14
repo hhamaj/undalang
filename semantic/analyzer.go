@@ -1,12 +1,12 @@
-// Package semantic resolves names, validates scopes, and runs a conservative
-// type check over Unda programs. Its output drives both `unda check` and the
-// C backend, which relies on the slot layout computed here.
+// Package semantic resolves names, checks scopes and runs a conservative type
+// check over Unda programs. `unda check` and the C backend both use its
+// output, and the backend depends on the slot layout computed here
 //
-// Name resolution follows the interpreter's dynamic rules: function bodies
-// are resolved only after the enclosing module has been fully declared,
-// because the interpreter looks names up at call time. Statements at the
-// same function level are resolved in order, so a direct use before a `let`
-// is reported.
+// name resolution follows the interpreter's dynamic rules. function bodies
+// get resolved only after the whole enclosing module is declared because the
+// interpreter looks names up at call time. statements at the same function
+// level are resolved in order, so using a name directly before its `let` gets
+// reported
 package semantic
 
 import (
@@ -23,12 +23,12 @@ import (
 )
 
 type Options struct {
-	// Native enables checks for features the C backend does not support.
+	// Native turns on checks for features the C backend doesn't support
 	Native bool
 }
 
-// Symbol is one binding slot in a function frame. Redeclaring a name in the
-// same scope reuses the slot, matching the interpreter's Define.
+// Symbol is one binding slot in a function frame. redeclaring a name in the
+// same scope reuses the slot, same as the interpreter's Define
 type Symbol struct {
 	Name    string
 	Slot    int
@@ -38,28 +38,28 @@ type Symbol struct {
 	decls   int
 }
 
-// Candidate is a binding an identifier may refer to, Depth frames up.
-// Direct candidates are resolved in execution order within the same
-// function, so they are always initialized when read.
+// Candidate is a binding an identifier might refer to, Depth frames up.
+// direct candidates are resolved in execution order within the same function
+// so they're always initialized when read
 type Candidate struct {
 	Sym    *Symbol
 	Depth  int
 	Direct bool
 }
 
-// Ref is a resolved identifier. Candidates are ordered nearest first. A
-// reference from a nested function may see a binding that is declared later
-// in an outer scope; at runtime the first initialized candidate wins, then
-// the global builtin (if any), exactly like the interpreter's env chain.
+// Ref is a resolved identifier with candidates ordered nearest first. a
+// reference from a nested function can see a binding declared later in an
+// outer scope. at runtime the first initialized candidate wins, then the
+// global builtin if there is one, exactly like the interpreter's env chain
 type Ref struct {
 	Name       string
 	Candidates []Candidate
 	Builtin    string
 }
 
-// FuncInfo describes one frame: a function literal, a module's top level,
-// or a loop body that creates closures (each iteration then gets its own
-// frame so closures capture that iteration's bindings).
+// FuncInfo describes one frame, which is a function literal, a module's top
+// level or a loop body that creates closures (then each iteration gets its
+// own frame so closures capture that iteration's bindings)
 type FuncInfo struct {
 	ID         int
 	Lit        *ast.FunctionLiteral
@@ -67,7 +67,7 @@ type FuncInfo struct {
 	Level      int
 	NumSlots   int
 	ParamSlots []int
-	// HeapFrame is set when a closure may capture this frame.
+	// HeapFrame is set when a closure might capture this frame
 	HeapFrame bool
 }
 
@@ -96,10 +96,10 @@ type Module struct {
 	Refs    map[*ast.Identifier]*Ref
 	Assigns map[*ast.AssignStatement]*Ref
 	Decls   map[ast.Statement]*Symbol
-	// Bindings maps identifiers introduced by for loops and match patterns.
+	// Bindings maps identifiers introduced by for loops and match patterns
 	Bindings map[*ast.Identifier]*Symbol
-	// LoopFrames holds the per-iteration frame of loops whose body creates
-	// closures.
+	// LoopFrames holds the per-iteration frame for loops whose body creates
+	// closures
 	LoopFrames map[ast.Statement]*FuncInfo
 	Imports    map[*ast.ImportStatement]*Import
 	Exports    []*Symbol
@@ -108,13 +108,13 @@ type Module struct {
 
 type Program struct {
 	Main *Module
-	// Modules lists every loaded module with dependencies before dependents.
+	// Modules lists every loaded module, dependencies before dependents
 	Modules     []*Module
 	Diagnostics []diag.Diagnostic
 	sources     map[string]string
 }
 
-// Source returns the text of the file a diagnostic refers to.
+// Source returns the text of the file a diagnostic points at
 func (p *Program) Source(file string) string { return p.sources[file] }
 
 func (p *Program) HasErrors() bool { return len(p.Diagnostics) > 0 }
@@ -135,7 +135,7 @@ func AnalyzeFile(path string, opts Options) *Program {
 	return a.prog
 }
 
-// AnalyzeSource analyzes source text whose imports resolve against dir.
+// AnalyzeSource analyzes source text, imports resolve against dir
 func AnalyzeSource(source, file, dir string, opts Options) *Program {
 	a := newAnalyzer(opts)
 	if dir == "" {
@@ -211,7 +211,7 @@ func (a *analyzer) loadSource(path, file, dir, source string) *Module {
 	return mod
 }
 
-// ModuleName mirrors the interpreter's default module naming.
+// ModuleName does the same default module naming as the interpreter
 func ModuleName(path string) string {
 	path = strings.TrimSuffix(path, ".unda")
 	path = filepath.Base(path)
@@ -226,8 +226,8 @@ type scope struct {
 	parent *scope
 	names  map[string]*Symbol
 	fn     *FuncInfo
-	// boundary marks a function's parameter scope; names found beyond it are
-	// read when the function runs, not in statement order.
+	// boundary marks a function's parameter scope. names found past it are
+	// read when the function runs, not in statement order
 	boundary bool
 }
 
@@ -326,9 +326,9 @@ func (c *checker) declare(sc *scope, name string, mutable bool, t Type) *Symbol 
 	return sym
 }
 
-// lookup collects the bindings name may refer to from sc outward. Bindings
+// lookup collects the bindings name might refer to, from sc outward. bindings
 // found before crossing a function boundary were declared earlier in
-// execution order, so they are initialized and the search stops there.
+// execution order so they're initialized and the search stops there
 func lookup(sc *scope, name string) []Candidate {
 	var out []Candidate
 	level := sc.fn.Level
@@ -417,8 +417,8 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 	return unknown()
 }
 
-// loopScope returns the scope a loop body's bindings live in. When the body
-// creates closures, it is a fresh frame per iteration.
+// loopScope returns the scope a loop body's bindings live in. if the body
+// creates closures it's a fresh frame per iteration
 func (c *checker) loopScope(loop ast.Statement, body *ast.BlockStatement, sc *scope) *scope {
 	if !containsFunction(body) {
 		return newScope(sc, sc.fn)
@@ -589,7 +589,7 @@ func (c *checker) expr(e ast.Expression, sc *scope) Type {
 	return unknown()
 }
 
-// pattern resolves a match pattern, declaring its bindings in sc.
+// pattern resolves a match pattern and declares its bindings in sc
 func (c *checker) pattern(p ast.Pattern, sc *scope) {
 	bind := func(id *ast.Identifier) {
 		if _, dup := sc.names[id.Value]; dup {

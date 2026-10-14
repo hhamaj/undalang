@@ -1,5 +1,5 @@
-// Package diag formats compile-time diagnostics with source context and
-// provides the path conventions shared by the interpreter and compiler.
+// Package diag formats compile time diagnostics with source context and has
+// the path conventions the interpreter and compiler share
 package diag
 
 import (
@@ -22,8 +22,8 @@ func (d Diagnostic) String() string {
 	return Location(d.File, d.Line, d.Column) + "error: " + d.Message
 }
 
-// Location renders "file:line:col: " (or "line L:C: " without a file) and
-// returns "" when the position is unknown.
+// Location renders "file:line:col: " (or "line L:C: " when there is no file)
+// and returns "" when the position is unknown
 func Location(file string, line, column int) string {
 	if line <= 0 {
 		if file != "" {
@@ -37,8 +37,8 @@ func Location(file string, line, column int) string {
 	return fmt.Sprintf("%s:%d:%d: ", file, line, column)
 }
 
-// Format renders a diagnostic followed by the offending source line and a
-// caret under the reported column.
+// Format prints a diagnostic, then the offending source line with a caret
+// under the column
 func Format(d Diagnostic, source string) string {
 	var out strings.Builder
 	out.WriteString(d.String())
@@ -65,8 +65,8 @@ func Format(d Diagnostic, source string) string {
 
 var parserErrorPattern = regexp.MustCompile(`^line (\d+):(\d+) (.*)$`)
 
-// FromParserError converts a parser error string ("line L:C message") into a
-// structured diagnostic.
+// FromParserError turns a parser error string ("line L:C message") into a
+// structured diagnostic
 func FromParserError(file, msg string) Diagnostic {
 	m := parserErrorPattern.FindStringSubmatch(msg)
 	if m == nil {
@@ -77,8 +77,8 @@ func FromParserError(file, msg string) Diagnostic {
 	return Diagnostic{File: file, Line: line, Column: col, Message: m[3]}
 }
 
-// DisplayPath shortens an absolute path to one relative to the working
-// directory when the file lives below it.
+// DisplayPath makes an absolute path relative to the working directory when
+// the file is under it
 func DisplayPath(path string) string {
 	if path == "" {
 		return ""

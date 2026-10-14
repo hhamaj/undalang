@@ -19,13 +19,13 @@ var binops = map[string]string{
 	"==": "OP_EQ", "!=": "OP_NE", "&&": "OP_AND", "||": "OP_OR",
 }
 
-// GenerateC lowers an analyzed program to a single C translation unit. The
-// program must be free of diagnostics.
+// GenerateC lowers an analyzed program to a single C translation unit. the
+// program must not have any diagnostics
 //
-// Every Unda frame becomes a slot array; identifiers were resolved to
-// (depth, slot) pairs by the semantic pass. Subexpressions are evaluated into
-// temporaries so Unda's left-to-right evaluation order survives C's
-// unspecified argument order.
+// every Unda frame becomes a slot array and the semantic pass already
+// resolved identifiers to (depth, slot) pairs. subexpressions go into
+// temporaries so Unda's left to right evaluation order survives C's
+// unspecified argument order
 func GenerateC(prog *semantic.Program) (string, error) {
 	if prog.HasErrors() || prog.Main == nil {
 		return "", fmt.Errorf("cannot generate C for a program with errors")
@@ -47,7 +47,7 @@ func GenerateC(prog *semantic.Program) (string, error) {
 	out.WriteString(g.decls.String())
 	out.WriteString("\n")
 	out.WriteString(g.defs.String())
-	// Static storage that can hold heap values is a GC root.
+	// static storage that can hold heap values is a GC root
 	out.WriteString("static void u_register_roots(void) {\n")
 	for _, mod := range prog.Modules {
 		fmt.Fprintf(&out, "    u_gc_add_root(mod_%d_slots, sizeof mod_%d_slots);\n", mod.ID, mod.ID)
@@ -79,7 +79,6 @@ func (g *gen) module(mod *semantic.Module) {
 		fmt.Fprintf(&g.decls, "static UValue fn_%d(UFrame *up, int argc, UValue *argv);\n", fn.ID)
 	}
 
-	// Module body.
 	f := &fgen{g: g, mod: mod, info: top, indent: 1}
 	f.line("UFrame *fr = &mod_%d_frame;", mod.ID)
 	f.line("UValue *S = fr->slots;")
@@ -88,7 +87,7 @@ func (g *gen) module(mod *semantic.Module) {
 	f.line("return %s;", result)
 	fmt.Fprintf(&g.defs, "static UValue mod_%d_body(void) {\n%s}\n\n", mod.ID, f.body.String())
 
-	// Module value constructor, used by importers.
+	// module value constructor, importers use this
 	if mod != g.prog.Main {
 		names := make([]string, 0, len(mod.Exports))
 		slots := make([]string, 0, len(mod.Exports))
@@ -175,7 +174,7 @@ func (f *fgen) slot(c semantic.Candidate) string {
 }
 
 // statements emits a statement list and returns the C expression holding the
-// value of the last one (a block's value in Unda).
+// last one's value, which is the block's value in Unda
 func (f *fgen) statements(stmts []ast.Statement) string {
 	result := "uv_nil()"
 	for _, stmt := range stmts {
@@ -254,10 +253,10 @@ func (f *fgen) stmt(s ast.Statement) string {
 	panic(fmt.Sprintf("cgen: unsupported statement %T", s))
 }
 
-// loopBody emits one iteration. Loops whose body creates closures get a
-// fresh heap frame per iteration; the C block shadows fr and S so the body
-// code is unchanged. Unda's break/continue map directly to C's, since the
-// generator emits no other C loops or switches.
+// loopBody emits one iteration. if the body creates closures every iteration
+// gets a fresh heap frame, the C block shadows fr and S so the body code
+// stays the same. break and continue map straight to C's since the generator
+// emits no other C loops or switches
 func (f *fgen) loopBody(loop ast.Statement, body *ast.BlockStatement, bind func()) {
 	frame := f.mod.LoopFrames[loop]
 	if frame != nil {
@@ -324,8 +323,8 @@ func (f *fgen) identifier(id *ast.Identifier) string {
 	if ref.Candidates[0].Direct {
 		return t
 	}
-	// The binding lives in an enclosing frame and may not have been
-	// initialized yet; fall back outward like the interpreter's env chain.
+	// the binding lives in an outer frame and might not be initialized yet,
+	// so fall back outward like the interpreter's env chain
 	opened := 0
 	for _, cand := range ref.Candidates[1:] {
 		f.line("if (%s.tag == U_UNDEF) {", t)
@@ -349,8 +348,8 @@ func (f *fgen) identifier(id *ast.Identifier) string {
 	return t
 }
 
-// expr emits the statements computing e and returns a side-effect-free C
-// expression for its value.
+// expr emits the statements that compute e and returns a side-effect free C
+// expression for its value
 func (f *fgen) expr(e ast.Expression) string {
 	switch e := e.(type) {
 	case *ast.IntegerLiteral:
@@ -543,9 +542,9 @@ func (f *fgen) matchArms(arms []ast.MatchArm, value, result string) {
 	f.line("}")
 }
 
-// pattern emits code that clears ok when value does not match p, checking
-// parts left to right and stopping at the first mismatch like the
-// interpreter. Bindings are written to their slots as they match.
+// pattern emits code that clears ok when value doesn't match p. it checks
+// parts left to right and stops at the first mismatch like the interpreter,
+// bindings are written to their slots as they match
 func (f *fgen) pattern(p ast.Pattern, value, ok string) {
 	switch p := p.(type) {
 	case *ast.WildcardPattern:
@@ -602,7 +601,8 @@ func (f *fgen) pattern(p ast.Pattern, value, ok string) {
 	}
 }
 
-// functionInspect reproduces object.Function.Inspect for a literal.
+// functionInspect does the same thing as object.Function.Inspect for a
+// literal
 func functionInspect(lit *ast.FunctionLiteral) string {
 	params := make([]string, 0, len(lit.Parameters))
 	for _, p := range lit.Parameters {
@@ -619,8 +619,8 @@ func functionInspect(lit *ast.FunctionLiteral) string {
 	return out.String()
 }
 
-// cString renders s as a C string literal using octal escapes, which cannot
-// swallow following digits the way \x escapes do.
+// cString renders s as a C string literal with octal escapes, \x escapes
+// would eat the digits that follow
 func cString(s string) string {
 	var out strings.Builder
 	out.WriteByte('"')

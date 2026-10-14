@@ -113,8 +113,8 @@ func (p *Parser) ParseProgram() *ast.Program {
 		before := len(p.errors)
 		stmt := p.parseStatement()
 		if len(p.errors) > before {
-			// Later errors in the same statement are almost always
-			// consequences of the first one; resume on the next line.
+			// later errors in the same statement are almost always fallout
+			// from the first one so we skip to the next line
 			p.errors = p.errors[:before+1]
 			for !p.peekTokenIs(token.EOF) && p.peekToken.Line == p.curToken.Line {
 				p.nextToken()
@@ -588,8 +588,8 @@ func (p *Parser) parseMatchExpression() ast.Expression {
 	return expression
 }
 
-// parsePattern parses a match pattern starting at the current token. A bare
-// identifier binds; any other expression is compared by value.
+// parsePattern parses a match pattern starting at the current token. a bare
+// identifier binds, anything else gets compared by value
 func (p *Parser) parsePattern() ast.Pattern {
 	switch {
 	case p.curTokenIs(token.Ident) && p.curToken.Literal == "_":

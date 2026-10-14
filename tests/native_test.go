@@ -15,9 +15,9 @@ import (
 	"undalang/runner"
 )
 
-// The native backend must be observably identical to the interpreter: each
-// program below runs through both and stdout, stderr and the exit code are
-// compared byte for byte.
+// the native backend has to behave exactly like the interpreter. every
+// program below runs through both and stdout, stderr and the exit code get
+// compared byte for byte
 var differentialPrograms = map[string]string{
 	"numbers": `println(1 + 2 * 3, 7 / 2, -7 / 2, 7 % 3, -7 % 3)
 println(0.1 + 0.2, 10 / 4.0, 100.0, 1.5 * 0.0000001, 1000000.0, 123456.0, 2.0 * 1000000000000000000000.0)
@@ -327,8 +327,8 @@ func TestNativeExamples(t *testing.T) {
 	}
 }
 
-// gcStressThreshold makes native test binaries collect every few KiB;
-// set UNDA_TEST_GC_THRESHOLD=1 to collect on every allocation.
+// gcStressThreshold makes native test binaries collect every few KiB. set
+// UNDA_TEST_GC_THRESHOLD=1 to collect on every allocation
 var gcStressThreshold = func() string {
 	if v := os.Getenv("UNDA_TEST_GC_THRESHOLD"); v != "" {
 		return v
@@ -336,7 +336,7 @@ var gcStressThreshold = func() string {
 	return "4096"
 }()
 
-// A loop that allocates far more than it keeps must run in bounded memory.
+// a loop that allocates way more than it keeps has to run in bounded memory
 func TestNativeGarbageCollection(t *testing.T) {
 	cc := requireCC(t)
 	if runtime.GOOS != "linux" {
@@ -410,7 +410,7 @@ func compareBackends(t *testing.T, cc, path string) {
 		t.Fatalf("build failed: %v", err)
 	}
 	cmd := exec.Command(exe)
-	// Collect very often so a missed GC root shows up as a mismatch.
+	// collect very often so a missed GC root shows up as a mismatch
 	cmd.Env = append(os.Environ(), "UNDA_GC_THRESHOLD="+gcStressThreshold)
 	var nout, nerr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &nout, &nerr

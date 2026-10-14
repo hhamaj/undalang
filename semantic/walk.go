@@ -2,7 +2,7 @@ package semantic
 
 import "undalang/ast"
 
-// containsFunction reports whether a function literal appears anywhere in n.
+// containsFunction reports whether a function literal shows up anywhere in n
 func containsFunction(n ast.Node) bool {
 	found := false
 	walk(n, func(n ast.Node) bool {
@@ -14,7 +14,7 @@ func containsFunction(n ast.Node) bool {
 	return found
 }
 
-// walk visits n and its children in source order until visit returns false.
+// walk visits n and its children in source order until visit returns false
 func walk(n ast.Node, visit func(ast.Node) bool) bool {
 	if n == nil || !visit(n) {
 		return false

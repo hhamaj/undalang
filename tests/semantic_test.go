@@ -140,7 +140,7 @@ func TestSemanticImports(t *testing.T) {
 	}
 }
 
-// The signature table must cover exactly the builtins the interpreter has.
+// the signature table has to cover exactly the builtins the interpreter has
 func TestSemanticSignaturesMatchBuiltins(t *testing.T) {
 	for name := range builtins.New(nil) {
 		if _, ok := semantic.GlobalBuiltins[name]; !ok {

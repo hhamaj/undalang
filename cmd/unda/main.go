@@ -45,8 +45,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  unda build path/to/file.unda [-o output] [--emit-c file.c]")
 }
 
-// parseArgs separates flags from positional arguments so flags may appear
-// anywhere. valueFlags lists flags that take a value.
+// parseArgs splits flags from positional args so flags can go anywhere.
+// valueFlags lists the flags that take a value
 func parseArgs(args []string, valueFlags, boolFlags []string) (map[string]string, []string, error) {
 	flags := map[string]string{}
 	var positional []string

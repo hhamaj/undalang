@@ -1,5 +1,5 @@
-// Package compiler is Unda's native backend: it lowers analyzed programs to C
-// and drives the system C compiler to produce an executable.
+// Package compiler is Unda's native backend. it lowers analyzed programs to C
+// and runs the system C compiler to get an executable
 package compiler
 
 import (
@@ -15,15 +15,15 @@ import (
 )
 
 type Options struct {
-	// Output is the executable path; empty skips invoking the C compiler.
+	// Output is the executable path, leave it empty to skip the C compiler
 	Output string
-	// EmitC, when set, also writes the generated C source to this path.
+	// EmitC also writes the generated C to this path when set
 	EmitC string
-	// CC overrides the C compiler; defaults to $CC, then "cc".
+	// CC overrides the C compiler, defaults to $CC and then cc
 	CC string
 }
 
-// DiagnosticsError reports that the program failed semantic analysis.
+// DiagnosticsError means the program failed semantic analysis
 type DiagnosticsError struct {
 	Program *semantic.Program
 }
@@ -32,7 +32,7 @@ func (e *DiagnosticsError) Error() string {
 	return fmt.Sprintf("%d error(s)", len(e.Program.Diagnostics))
 }
 
-// Build analyzes path, generates C, and compiles it according to opts.
+// Build analyzes path, generates C and compiles it based on opts
 func Build(path string, opts Options) error {
 	prog := semantic.AnalyzeFile(path, semantic.Options{Native: true})
 	if prog.HasErrors() {
@@ -53,7 +53,7 @@ func Build(path string, opts Options) error {
 	return CompileC(src, opts.Output, opts.CC)
 }
 
-// CompileC writes src to a temporary file and compiles it to output.
+// CompileC writes src to a temp file and compiles it to output
 func CompileC(src, output, cc string) error {
 	if cc == "" {
 		cc = os.Getenv("CC")
@@ -80,7 +80,7 @@ func CompileC(src, output, cc string) error {
 	return nil
 }
 
-// DefaultOutput derives an executable name from a source path.
+// DefaultOutput picks an executable name from a source path
 func DefaultOutput(path string) string {
 	return strings.TrimSuffix(filepath.Base(path), ".unda")
 }

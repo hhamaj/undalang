@@ -75,8 +75,8 @@ type ReturnValue struct {
 func (rv *ReturnValue) Type() Type      { return ReturnValueObj }
 func (rv *ReturnValue) Inspect() string { return rv.Value.Inspect() }
 
-// BreakSignal and ContinueSignal propagate out of a loop body like
-// ReturnValue propagates out of a function.
+// BreakSignal and ContinueSignal propagate out of a loop body the same way
+// ReturnValue propagates out of a function
 type BreakSignal struct{}
 
 func (b *BreakSignal) Type() Type      { return BreakObj }
@@ -104,8 +104,8 @@ type Function struct {
 	Body       *ast.BlockStatement
 	Env        *Environment
 	Name       string
-	// File and BaseDir record where the function was defined so errors and
-	// imports inside its body resolve against the defining module.
+	// File and BaseDir remember where the function was defined so errors and
+	// imports in its body resolve against that module
 	File    string
 	BaseDir string
 }

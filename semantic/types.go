@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// Kind is a bit set of the runtime value kinds an expression may produce.
-// A set with exactly one bit is a statically known type; checks only fire on
-// known types so dynamic code keeps working unchanged.
+// Kind is a bit set of the runtime value kinds an expression can produce. a
+// set with exactly one bit is a statically known type. checks only fire on
+// known types so dynamic code keeps working as before
 type Kind uint16
 
 const (
@@ -42,7 +42,7 @@ var kindNames = []struct {
 
 func (k Kind) Known() bool { return bits.OnesCount16(uint16(k)) == 1 }
 
-// String uses the runtime's type names so static and runtime messages match.
+// String uses the runtime's type names so static and runtime messages match
 func (k Kind) String() string {
 	if k == KUnknown {
 		return "UNKNOWN"
@@ -59,21 +59,21 @@ func (k Kind) String() string {
 	return strings.Join(parts, "|")
 }
 
-// Type is the static approximation of a value.
+// Type is the static approximation of a value
 type Type struct {
 	Kind Kind
-	// Arity is the parameter count when Kind is KFunction and the function
-	// literal is known; -1 otherwise.
+	// Arity is the parameter count when Kind is KFunction and we know the
+	// function literal, -1 otherwise
 	Arity   int
 	Builtin *Signature
 	Module  *ModuleType
 }
 
-// ModuleType lists the members of a module known at compile time.
+// ModuleType lists the module members known at compile time
 type ModuleType struct {
 	Name    string
 	Members map[string]Type
-	// Std marks standard modules, whose members are builtins.
+	// Std marks standard modules, their members are builtins
 	Std bool
 }
 
@@ -93,14 +93,14 @@ func join(a, b Type) Type {
 	return kindType(a.Kind | b.Kind)
 }
 
-// Signature describes a builtin function for arity and argument checks.
+// Signature describes a builtin function for arity and argument checks
 type Signature struct {
 	Name    string
 	MinArgs int
 	MaxArgs int // -1 means variadic
 	Params  []Kind
 	Returns Kind
-	// NativeUnsupported is set for builtins the C backend does not implement.
+	// NativeUnsupported is set for builtins the C backend doesn't implement
 	NativeUnsupported bool
 }
 
@@ -128,7 +128,7 @@ func sig(name string, min, max int, returns Kind, params ...Kind) *Signature {
 	return &Signature{Name: name, MinArgs: min, MaxArgs: max, Params: params, Returns: returns}
 }
 
-// GlobalBuiltins mirrors builtins.New.
+// GlobalBuiltins mirrors builtins.New
 var GlobalBuiltins = map[string]*Signature{
 	"print":       sig("print", 0, -1, KNil),
 	"println":     sig("println", 0, -1, KNil),
@@ -139,7 +139,7 @@ var GlobalBuiltins = map[string]*Signature{
 	"append_file": sig("append_file", 2, 2, KInt, KString, KString),
 }
 
-// StdModules mirrors builtins.StdModules.
+// StdModules mirrors builtins.StdModules
 var StdModules = map[string]map[string]*Signature{
 	"strings": {
 		"contains":   sig("strings.contains", 2, 2, KBool, KString, KString),
@@ -219,7 +219,7 @@ func sortedKeys[V any](m map[string]V) []string {
 }
 
 // infixResult mirrors evaluator.evalInfixExpression for statically known
-// kinds. It returns the result kind or the runtime error message.
+// kinds. it returns the result kind or the runtime error message
 func infixResult(op string, l, r Kind) (Kind, string) {
 	isNum := func(k Kind) bool { return k == KInt || k == KFloat }
 	switch {

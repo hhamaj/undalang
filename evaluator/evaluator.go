@@ -25,8 +25,8 @@ var (
 	continueSignal = &object.ContinueSignal{}
 )
 
-// MaxCallDepth bounds Unda-level recursion so runaway programs report an
-// error instead of exhausting the host stack. The C backend uses the same limit.
+// MaxCallDepth caps Unda recursion so runaway programs get an error instead
+// of blowing the host stack. the C backend uses the same limit
 const MaxCallDepth = 10000
 
 func Eval(node ast.Node, env *object.Environment, out io.Writer) object.Object {
@@ -36,8 +36,8 @@ func Eval(node ast.Node, env *object.Environment, out io.Writer) object.Object {
 
 type Context struct {
 	BaseDir string
-	// File is the display path of the module being evaluated; it is attached
-	// to runtime errors.
+	// File is the display path of the module being evaluated, it gets
+	// attached to runtime errors
 	File     string
 	Out      io.Writer
 	loading  map[string]bool
@@ -61,9 +61,9 @@ func NewContext(baseDir string, out io.Writer) *Context {
 	}
 }
 
-// EvalWithContext evaluates node and stamps any runtime error created while
-// evaluating it with the node's source position. Errors that already carry a
-// position (raised deeper in the tree) are left untouched.
+// EvalWithContext evaluates node and stamps the node's source position on any
+// runtime error created along the way. errors that already have a position
+// from deeper in the tree are left alone
 func EvalWithContext(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 	result := eval(node, env, ctx)
 	if errObj, ok := result.(*object.Error); ok && errObj.Line == 0 {
@@ -238,8 +238,8 @@ func evalBlockStatement(block *ast.BlockStatement, env *object.Environment, ctx 
 	return result
 }
 
-// loopControl interprets a loop body's result. It reports whether the loop
-// should stop and, if so, the value the loop statement evaluates to.
+// loopControl looks at a loop body's result and says whether the loop should
+// stop, and if so what value the loop statement gives
 func loopControl(result object.Object) (stop bool, value object.Object) {
 	switch result.(type) {
 	case *object.BreakSignal:
@@ -277,8 +277,8 @@ func evalForStatement(node *ast.ForStatement, env *object.Environment, ctx *Cont
 		return err
 	}
 	for i := range first {
-		// Each iteration gets fresh bindings so closures capture that
-		// iteration's values.
+		// each iteration gets fresh bindings so closures capture that
+		// iteration's values
 		loopEnv := object.NewEnclosedEnvironment(env)
 		loopEnv.Define(node.Vars[0].Value, first[i], false)
 		if len(node.Vars) == 2 {
@@ -291,9 +291,9 @@ func evalForStatement(node *ast.ForStatement, env *object.Environment, ctx *Cont
 	return nilObj
 }
 
-// IterationItems lists what a for loop binds. With one variable: array
-// elements, map keys (ordered like maps.keys) or string characters. With
-// two: index/key in first and the element/value in second.
+// IterationItems lists what a for loop binds. with one variable that's array
+// elements, map keys (same order as maps.keys) or string characters. with two
+// it's index/key in first and element/value in second
 func IterationItems(iterable object.Object, vars int) (first, second []object.Object, err *object.Error) {
 	switch it := iterable.(type) {
 	case *object.Array:
@@ -537,7 +537,7 @@ func evalIndexExpression(left, index object.Object) object.Object {
 		}
 		return pair.Value
 	case left.Type() == object.StringObj && index.Type() == object.IntegerObj:
-		// Strings index by character (code point), not byte.
+		// strings index by character (code point) not byte
 		idx := index.(*object.Integer).Value
 		if idx < 0 {
 			return nilObj
@@ -556,7 +556,7 @@ func evalIndexExpression(left, index object.Object) object.Object {
 }
 
 // evalMemberExpression handles module members and `m.key`, which reads the
-// string key from a map like m["key"].
+// string key from a map just like m["key"]
 func evalMemberExpression(obj object.Object, property string) object.Object {
 	if m, ok := obj.(*object.Map); ok {
 		key := &object.String{Value: property}
@@ -582,7 +582,8 @@ func evalMatchExpression(node *ast.MatchExpression, env *object.Environment, ctx
 		return value
 	}
 	for _, arm := range node.Arms {
-		// Bindings live in a fresh scope per arm so a failed arm leaks nothing.
+		// bindings go in a fresh scope per arm so a failed arm doesn't leak
+		// anything
 		armEnv := object.NewEnclosedEnvironment(env)
 		ok, abrupt := matchPattern(arm.Pattern, value, armEnv, ctx)
 		if abrupt != nil {
@@ -605,8 +606,8 @@ func evalMatchExpression(node *ast.MatchExpression, env *object.Environment, ctx
 	return nilObj
 }
 
-// matchPattern reports whether value matches pattern, defining bindings in
-// env. A non-nil second result is an error or signal to propagate.
+// matchPattern reports whether value matches pattern and defines the bindings
+// in env. a non-nil second result is an error or signal that has to propagate
 func matchPattern(pattern ast.Pattern, value object.Object, env *object.Environment, ctx *Context) (bool, object.Object) {
 	switch p := pattern.(type) {
 	case *ast.WildcardPattern:
@@ -798,8 +799,8 @@ func nativeBool(input bool) *object.Boolean {
 	return falseObj
 }
 
-// isTruthy compares by value: builtins return fresh Boolean and Nil objects,
-// so identity checks against the shared singletons are not enough.
+// isTruthy compares by value. builtins return fresh Boolean and Nil objects
+// so checking identity against the shared singletons isn't enough
 func isTruthy(obj object.Object) bool {
 	switch obj := obj.(type) {
 	case *object.Nil:
@@ -892,8 +893,8 @@ func isError(obj object.Object) bool {
 	return false
 }
 
-// isAbrupt reports values that end evaluation early: errors and the
-// return/break/continue signals. They propagate through every expression.
+// isAbrupt reports values that end evaluation early, meaning errors and the
+// return/break/continue signals. they propagate through every expression
 func isAbrupt(obj object.Object) bool {
 	switch obj.(type) {
 	case *object.Error, *object.ReturnValue, *object.BreakSignal, *object.ContinueSignal:

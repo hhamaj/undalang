@@ -131,9 +131,9 @@ func (ws *WhileStatement) String() string {
 	return "while " + ws.Condition.String() + " { " + ws.Body.String() + " }"
 }
 
-// ForStatement iterates over an array, map or string. With one variable it
-// binds elements (array), keys (map) or characters (string); with two it
-// binds index/key and value.
+// ForStatement loops over an array, map or string. with one variable you get
+// the elements, the keys or the characters, with two you get index/key and
+// value
 type ForStatement struct {
 	Token    token.Token
 	Vars     []*Identifier
@@ -399,13 +399,13 @@ func (me *MemberExpression) String() string {
 	return me.Object.String() + "." + me.Property.String()
 }
 
-// Pattern is the left side of a match arm.
+// Pattern is the left side of a match arm
 type Pattern interface {
 	Node
 	patternNode()
 }
 
-// WildcardPattern (`_`) matches anything without binding.
+// WildcardPattern is `_`, it matches anything and binds nothing
 type WildcardPattern struct {
 	Token token.Token
 }
@@ -414,7 +414,7 @@ func (wp *WildcardPattern) patternNode()         {}
 func (wp *WildcardPattern) TokenLiteral() string { return wp.Token.Literal }
 func (wp *WildcardPattern) String() string       { return "_" }
 
-// BindingPattern matches anything and binds it to Name.
+// BindingPattern matches anything and puts it in Name
 type BindingPattern struct {
 	Token token.Token
 	Name  *Identifier
@@ -424,7 +424,7 @@ func (bp *BindingPattern) patternNode()         {}
 func (bp *BindingPattern) TokenLiteral() string { return bp.Token.Literal }
 func (bp *BindingPattern) String() string       { return bp.Name.String() }
 
-// ValuePattern matches values equal to an expression, such as a literal.
+// ValuePattern matches when the value equals an expression, usually a literal
 type ValuePattern struct {
 	Token token.Token
 	Value Expression
@@ -434,9 +434,9 @@ func (vp *ValuePattern) patternNode()         {}
 func (vp *ValuePattern) TokenLiteral() string { return vp.Token.Literal }
 func (vp *ValuePattern) String() string       { return vp.Value.String() }
 
-// ArrayPattern matches arrays element by element. With a rest marker
-// (`..` or `..name`) it matches arrays at least as long as Elements and
-// optionally binds the remaining elements.
+// ArrayPattern matches arrays element by element. with a rest marker (`..` or
+// `..name`) the array just has to be at least as long as Elements and the
+// leftovers can be bound to a name
 type ArrayPattern struct {
 	Token    token.Token
 	Elements []Pattern
@@ -461,8 +461,8 @@ func (ap *ArrayPattern) String() string {
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-// MapPattern matches maps containing every key, with each value matching
-// its sub-pattern. Extra keys are allowed.
+// MapPattern matches maps that have every key with a matching value. extra
+// keys are fine
 type MapPattern struct {
 	Token  token.Token
 	Keys   []Expression
@@ -481,7 +481,7 @@ func (mp *MapPattern) String() string {
 
 type MatchArm struct {
 	Pattern Pattern
-	// Guard, when set, must be truthy for the arm to be chosen.
+	// Guard has to be truthy for the arm to be picked, if there is one
 	Guard Expression
 	Value Expression
 }
@@ -552,9 +552,9 @@ func (ce *CallExpression) String() string {
 	return out.String()
 }
 
-// Position returns the source location used to report diagnostics and
-// runtime errors for a node. Calls are reported at their callee so the
-// location points at the function name rather than the opening paren.
+// Position gives the source location we use for diagnostics and runtime
+// errors. calls point at the callee so the caret lands on the function name
+// and not the opening paren
 func Position(node Node) (line, column int) {
 	var tok token.Token
 	switch n := node.(type) {
@@ -574,7 +574,7 @@ func Position(node Node) (line, column int) {
 	case *WhileStatement:
 		tok = n.Token
 	case *ForStatement:
-		// Errors raised by the loop itself concern the iterable.
+		// errors from the loop itself are about the iterable
 		return Position(n.Iterable)
 	case *BreakStatement:
 		tok = n.Token

@@ -33,8 +33,8 @@ func New(out io.Writer) map[string]*object.Builtin {
 	return b
 }
 
-// Applier calls an Unda function value; higher-order builtins use it so
-// callbacks run in the caller's evaluation context.
+// Applier calls an Unda function value. higher-order builtins go through it
+// so callbacks run in the caller's evaluation context
 type Applier func(fn object.Object, args []object.Object) object.Object
 
 func StdModules(apply Applier) map[string]*object.Module {
