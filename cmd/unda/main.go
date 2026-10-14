@@ -4,14 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 
+	"undalang/backend"
 	"undalang/compiler"
-	"undalang/diag"
 	"undalang/repl"
-	"undalang/runner"
 	"undalang/semantic"
 )
 
@@ -40,7 +37,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  unda repl")
-	fmt.Fprintln(os.Stderr, "  unda run [--native] path/to/file.unda")
+	fmt.Fprintln(os.Stderr, "  unda run [--backend=interp|vm|native] path/to/file.unda   (--vm and --native are short for those)")
 	fmt.Fprintln(os.Stderr, "  unda check [--native] path/to/file.unda")
 	fmt.Fprintln(os.Stderr, "  unda build path/to/file.unda [-o output] [--emit-c file.c]")
 }
@@ -104,35 +101,25 @@ func singleFile(cmd string, args []string, valueFlags, boolFlags []string) (map[
 }
 
 func runCmd(args []string) int {
-	flags, file, ok := singleFile("run", args, nil, []string{"native"})
+	flags, file, ok := singleFile("run", args, []string{"backend"}, []string{"native", "vm"})
 	if !ok {
 		return 1
 	}
-	if flags["native"] == "" {
-		return runner.RunFile(file, os.Stdout, os.Stderr)
+	name := flags["backend"]
+	switch {
+	case flags["native"] != "":
+		name = "native"
+	case flags["vm"] != "":
+		name = "vm"
+	case name == "":
+		name = "interp"
 	}
-
-	dir, err := os.MkdirTemp("", "unda-run-")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	b, found := backend.Get(name)
+	if !found {
+		fmt.Fprintf(os.Stderr, "error: unknown backend %q, pick one of %s\n", name, strings.Join(backend.Names(), ", "))
 		return 1
 	}
-	defer os.RemoveAll(dir)
-	exe := filepath.Join(dir, compiler.DefaultOutput(file))
-	if code := build(file, compiler.Options{Output: exe}); code != 0 {
-		return code
-	}
-	cmd := exec.Command(exe)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return exitErr.ExitCode()
-		}
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-	return 0
+	return b.Run(file, os.Stdin, os.Stdout, os.Stderr)
 }
 
 func checkCmd(args []string) int {
@@ -174,8 +161,4 @@ func build(file string, opts compiler.Options) int {
 	return 1
 }
 
-func printDiagnostics(prog *semantic.Program) {
-	for _, d := range prog.Diagnostics {
-		fmt.Fprint(os.Stderr, diag.Format(d, prog.Source(d.File)))
-	}
-}
+func printDiagnostics(prog *semantic.Program) { backend.PrintDiagnostics(os.Stderr, prog) }

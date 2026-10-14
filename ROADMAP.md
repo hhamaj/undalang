@@ -224,6 +224,11 @@ Success criteria:
 ### Phase 5 — Backend Expansion
 Goal: make compilation architecture backend-agnostic.
 
+Status:
+- backend layer: the `backend` package puts interp, vm and native behind one interface, `unda run --backend=...` picks one, and the differential tests compare all three
+- bytecode VM (`vm` package): compiles the analyzed program, with the checker's frames and slots, to a stack machine. operators, builtins and type checks are the interpreter's Go code, so behavior matches by construction. int fast paths, plain stores for proven assignments and reused frames for calls nothing captures make it 2.4-3.4x faster than the tree walker (fib(30) 205 ms against 692, Python 3.14 takes 99)
+- not started: the LLVM and direct native backends. neither clang nor llc is installed here, and the C backend already produces native code through cc
+
 Deliverables:
 - backend abstraction layer in compiler architecture
 - optional LLVM backend

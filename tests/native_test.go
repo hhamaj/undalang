@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"testing"
 
+	"undalang/backend"
 	"undalang/compiler"
 	"undalang/runner"
 )
@@ -631,6 +632,16 @@ func compareBackends(t *testing.T, cc, path string) {
 	var out, errOut bytes.Buffer
 	code := runner.RunFile(path, &out, &errOut)
 	interp := runResult{out.String(), errOut.String(), code}
+
+	// the bytecode VM runs in process, it has to agree with the interpreter
+	// as exactly as the native binary does
+	vmBackend, _ := backend.Get("vm")
+	var vout, verr bytes.Buffer
+	vcode := vmBackend.Run(path, nil, &vout, &verr)
+	if vmRes := (runResult{vout.String(), verr.String(), vcode}); vmRes != interp {
+		t.Fatalf("vm differs from the interpreter\n--- interpreter (exit %d)\nstdout:\n%s\nstderr:\n%s\n--- vm (exit %d)\nstdout:\n%s\nstderr:\n%s",
+			interp.code, interp.stdout, interp.stderr, vmRes.code, vmRes.stdout, vmRes.stderr)
+	}
 
 	exe := filepath.Join(t.TempDir(), "prog")
 	if err := compiler.Build(path, compiler.Options{Output: exe, CC: cc}); err != nil {
