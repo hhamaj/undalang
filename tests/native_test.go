@@ -544,6 +544,144 @@ println(bump(base), base)
 	"err_index_typed":    "let mut xs: array[int] = [1]\nfn set(v) { xs[0] = v }\nset(2)\nprintln(xs)\nset(\"s\")",
 	"err_index_field":    "struct P { x: int }\nlet mut ps = [P(1)]\nfn set(v) { ps[0].x = v }\nset(\"s\")",
 	"err_index_inner":    "let mut xs = [1]\nfn at(k) { xs[[][k]] = 1 }\nat(\"x\")",
+	"in_place_aliasing":  inPlaceAliasing,
+	"err_typed_in_place": "let mut m: map[string, int] = {}\nm[\"a\"] = 1\nm[\"b\"] = 2\nfn put(v) { m[\"c\"] = v }\nput(3)\nprintln(m)\nput(\"s\")",
+	"err_field_in_place": "struct P { xs: array[int] }\nlet mut ps = [P([1])]\nps[0].xs[0] = 2\nfn put(v) { ps[0].xs[0] = v }\nput(\"s\")",
+}
+
+// inPlaceAliasing tries to see an in-place update through a second holder.
+// updates reuse a value nothing else holds (see object.Escape), the output
+// has to stay what copying on every update gave, inPlaceAliasingOutput
+const inPlaceAliasing = `import "arrays" as arrays
+import "maps" as maps
+struct P { x: int, inner: array }
+
+// snapshot taken after updates made the value owned
+let mut m = {}
+m["a"] = 1
+m["b"] = 2
+let snap = m
+m["a"] = 100
+println("snap", snap, m)
+
+// an inner value read out while the outer stays owned
+let mut grid = [[0, 0], [0, 0]]
+grid[0][0] = 1
+grid[1][1] = 1
+let row = grid[1]
+grid[1][0] = 7
+println("row", row, grid)
+
+// a builtin handing back an element
+let mut g2 = [[1], [2]]
+g2[0][0] = 10
+let mut first = arrays.first(g2)
+first[0] = 99
+println("first", first, g2)
+
+// for loop and match keep the old elements
+let mut xs = [[1], [2]]
+xs[0][0] = 5
+for item in xs {
+    xs[1][0] = 50
+    println("item", item)
+}
+fn after_match(a, rest) {
+    xs[0][0] = 6
+    println("match", a, rest, xs)
+}
+match xs {
+    [a, ..rest] -> after_match(a, rest),
+}
+
+// closures see the binding, not a copy taken earlier
+let mut counter = {"n": 0}
+fn bump() { counter["n"] = counter["n"] + 1 }
+bump()
+let seen = counter
+bump()
+println("closure", seen, counter)
+
+// parameters and returns
+fn change(v) {
+    let mut c = v
+    c[0] = "changed"
+    c
+}
+let mut orig = ["o"]
+orig[0] = "owned"
+let other = change(orig)
+println("param", orig, other)
+
+// struct fields and nested paths
+let mut p = P(1, [1, 2])
+p.x = 2
+p.inner[0] = 9
+let q = p
+p.inner[1] = 8
+p.x = 3
+println("struct", p, q)
+
+// maps inside maps, values stored elsewhere
+let mut reg = {"list": []}
+reg["list"] = [1]
+let mut holder = [reg["list"]]
+reg["list"][0] = 2
+holder[0][0] = 3
+println("nested", reg, holder)
+
+// maps.set and arrays.append still give new values
+let mut base = {"k": 1}
+base["k"] = 2
+let made = maps.set(base, "k", 3)
+base["k"] = 4
+println("builtins", base, made)
+let mut arr = [1]
+arr[0] = 2
+let longer = arrays.append(arr, 3)
+arr[0] = 5
+println("append", arr, longer)
+
+// same value bound to two names, then both updated
+let mut l1 = [0]
+l1[0] = 1
+let mut l2 = l1
+l1[0] = 2
+l2[0] = 3
+println("two", l1, l2)
+
+// self assignment through a read of itself
+let mut self_ref = [[1]]
+self_ref[0][0] = 2
+self_ref[0] = self_ref
+self_ref[0][0] = "x"
+println("self", self_ref)
+`
+
+const inPlaceAliasingOutput = `snap {a: 1, b: 2} {a: 100, b: 2}
+row [0, 1] [[1, 0], [7, 1]]
+first [99] [[10], [2]]
+item [5]
+item [2]
+match [5] [[50]] [[6], [50]]
+closure {n: 1} {n: 2}
+param [owned] [changed]
+struct P(x: 3, inner: [9, 8]) P(x: 2, inner: [9, 2])
+nested {list: [2]} [[3]]
+builtins {k: 4} {k: 3}
+append [5] [2, 3]
+two [2] [3]
+self [[x]]
+`
+
+func TestInPlaceUpdatesKeepValueSemantics(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := runner.RunSource(inPlaceAliasing, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	if out.String() != inPlaceAliasingOutput {
+		t.Fatalf("got\n%s\nwant\n%s", out.String(), inPlaceAliasingOutput)
+	}
 }
 
 func TestNativeMatchesInterpreter(t *testing.T) {

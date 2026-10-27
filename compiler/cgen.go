@@ -308,6 +308,16 @@ type fgen struct {
 	body   strings.Builder
 	tmp    int
 	indent int
+	// path is set while a path assignment like `m[k] = v` is being stored
+	path *pathAssign
+}
+
+// pathAssign is what checking a typed binding after `x[i] = v` needs: the
+// C array of steps, how many and the new part
+type pathAssign struct {
+	steps string
+	n     int
+	leaf  string
 }
 
 func (f *fgen) line(format string, args ...interface{}) {
@@ -445,16 +455,19 @@ func (f *fgen) stmt(s ast.Statement) string {
 				if step.Field != nil {
 					steps[i] = fmt.Sprintf("{%s, {0}}", cString(step.Field.Value))
 				} else {
-					steps[i] = fmt.Sprintf("{NULL, %s}", f.expr(step.Index))
+					steps[i] = fmt.Sprintf("{NULL, %s}", f.operand(step.Index))
 				}
 			}
 			cur := f.readRef(f.mod.Assigns[s], s.Name)
-			t := f.temp()
+			st, t := f.temp(), f.temp()
+			f.line("UStep %s[] = {%s};", st, strings.Join(steps, ", "))
 			f.loc(s)
-			f.line("UValue %s = u_with_path(%s, %d, (UStep[]){%s}, %s);", t, cur, len(steps), strings.Join(steps, ", "), v)
+			f.line("UValue %s = u_with_path(%s, %d, %s, %s);", t, cur, len(steps), st, v)
+			f.path = &pathAssign{steps: st, n: len(steps), leaf: v}
 			v = t
 		}
 		f.assign(s, v)
+		f.path = nil
 		return v
 	case *ast.ReturnStatement:
 		v := f.expr(s.ReturnValue)
@@ -495,7 +508,7 @@ func (f *fgen) stmt(s ast.Statement) string {
 	case *ast.WhileStatement:
 		f.line("for (;;) {")
 		f.indent++
-		cond := f.expr(s.Condition)
+		cond := f.operand(s.Condition)
 		f.line("if (!u_truthy(%s)) break;", cond)
 		f.loopBody(s, s.Body, nil)
 		f.indent--
@@ -587,9 +600,17 @@ func (f *fgen) assign(s *ast.AssignStatement, v string) {
 }
 
 func (f *fgen) assignChecked(s *ast.AssignStatement, sym *semantic.Symbol, lv, v string) {
-	if sym.Annot != nil {
+	if sym.Annot != nil && sym.Annot.Name != "any" {
 		f.loc(s)
-		f.checkType(v, sym.Annot, sym.Name+" expects")
+		if p := f.path; p != nil {
+			// the rest already fit, look at the part that changed first
+			f.line("if (!u_path_fits(&%s, %d, %s, %s))", f.g.typeDesc(sym.Annot), p.n, p.steps, p.leaf)
+			f.indent++
+			f.checkType(v, sym.Annot, sym.Name+" expects")
+			f.indent--
+		} else {
+			f.checkType(v, sym.Annot, sym.Name+" expects")
+		}
 	}
 	f.line("%s = %s;", lv, v)
 }
@@ -654,13 +675,16 @@ func (f *fgen) expr(e ast.Expression) string {
 		return "uv_bool(false)"
 	case *ast.NilLiteral:
 		return "uv_nil()"
-	case *ast.Identifier:
-		return f.identifier(e)
+	case *ast.Identifier, *ast.IndexExpression, *ast.MemberExpression:
+		// the value may now be held somewhere else, see u_escape
+		v := f.place(e)
+		f.line("u_escape(%s);", v)
+		return v
 	case *ast.PrefixExpression:
 		if v, ok := foldInt(e); ok {
 			return intLiteral(v)
 		}
-		r := f.expr(e.Right)
+		r := f.operand(e.Right)
 		t := f.temp()
 		if e.Operator == "!" {
 			f.line("UValue %s = u_not(%s);", t, r)
@@ -689,7 +713,7 @@ func (f *fgen) expr(e ast.Expression) string {
 		}
 		return f.call(e, calleeExpr, callee, args)
 	case *ast.IfExpression:
-		cond := f.expr(e.Condition)
+		cond := f.operand(e.Condition)
 		t := f.temp()
 		f.line("UValue %s;", t)
 		f.line("if (u_truthy(%s)) {", cond)
@@ -736,19 +760,6 @@ func (f *fgen) expr(e ast.Expression) string {
 			v := f.expr(pair.Value)
 			f.line("u_map_set(%s.as.m, %s, %s);", t, k, v)
 		}
-		return t
-	case *ast.IndexExpression:
-		l := f.expr(e.Left)
-		i := f.expr(e.Index)
-		t := f.temp()
-		f.loc(e)
-		f.line("UValue %s = u_index(%s, %s);", t, l, i)
-		return t
-	case *ast.MemberExpression:
-		o := f.expr(e.Object)
-		t := f.temp()
-		f.loc(e)
-		f.line("UValue %s = u_member(%s, %s);", t, o, cString(e.Property.Value))
 		return t
 	case *ast.MatchExpression:
 		v := f.expr(e.Value)
@@ -828,7 +839,7 @@ func (f *fgen) infix(e *ast.InfixExpression) string {
 	if b, ok := foldCompare(e); ok {
 		return fmt.Sprintf("uv_bool(%t)", b)
 	}
-	l := f.expr(e.Left)
+	l := f.operand(e.Left)
 	t := f.temp()
 	if e.Operator == "&&" || e.Operator == "||" {
 		f.line("UValue %s;", t)
@@ -841,14 +852,14 @@ func (f *fgen) infix(e *ast.InfixExpression) string {
 		}
 		f.line("} else {")
 		f.indent++
-		r := f.expr(e.Right)
+		r := f.operand(e.Right)
 		f.loc(e)
 		f.line("%s = u_binop(%s, %s, %s);", t, op, l, r)
 		f.indent--
 		f.line("}")
 		return t
 	}
-	r := f.expr(e.Right)
+	r := f.operand(e.Right)
 	if fast, ok := fastInt[e.Operator]; ok {
 		cond := fmt.Sprintf("%s.tag == U_INT && %s.tag == U_INT", l, r)
 		if e.Operator == "/" || e.Operator == "%" {
@@ -944,6 +955,34 @@ func (f *fgen) call(node ast.Node, calleeExpr ast.Expression, callee string, arg
 	f.line("UValue %s = u_call(%s, %d, %s);", t, callee, len(args), argv)
 	return t
 }
+
+// place reads a name, element or field without escaping it, for the left
+// side of `m[k]` and `p.x`. evaluator.evalPlace is the interpreter's copy
+func (f *fgen) place(e ast.Expression) string {
+	switch e := e.(type) {
+	case *ast.Identifier:
+		return f.identifier(e)
+	case *ast.IndexExpression:
+		l := f.place(e.Left)
+		i := f.operand(e.Index)
+		t := f.temp()
+		f.loc(e)
+		f.line("UValue %s = u_index(%s, %s);", t, l, i)
+		return t
+	case *ast.MemberExpression:
+		o := f.place(e.Object)
+		t := f.temp()
+		f.loc(e)
+		f.line("UValue %s = u_member(%s, %s);", t, o, cString(e.Property.Value))
+		return t
+	}
+	return f.expr(e)
+}
+
+// operand reads a value that only gets looked at, like an operand of + or
+// a condition. operators always make a new value, they never hand an operand
+// on, so nothing escapes
+func (f *fgen) operand(e ast.Expression) string { return f.place(e) }
 
 // directCallee returns the function a call is known to reach, if any. that's
 // a plain name bound once to a function literal with nothing else it could

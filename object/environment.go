@@ -119,10 +119,32 @@ func (e *Environment) Assign(name string, val Object) Object {
 	return &Error{Message: fmt.Sprintf("identifier not found: %s", name)}
 }
 
+// AssignWith is Assign for a value that only changed in part. cheap says
+// whether the binding's type still holds without walking the whole value,
+// when it can't tell the full check runs and names what doesn't fit
+func (e *Environment) AssignWith(name string, val Object, cheap func(*ast.TypeAnnotation) bool) Object {
+	for env := e; env != nil; env = env.outer {
+		i := env.find(name)
+		if i < 0 {
+			continue
+		}
+		binding := &env.entries[i].Binding
+		if !binding.Mutable {
+			return &Error{Message: fmt.Sprintf("cannot assign to immutable binding %q", name)}
+		}
+		if binding.Type != nil && !cheap(binding.Type) && !Fits(binding.Type, val) {
+			return TypeMismatch(name+" expects", binding.Type, val)
+		}
+		binding.Value = val
+		return val
+	}
+	return &Error{Message: fmt.Sprintf("identifier not found: %s", name)}
+}
+
 func (e *Environment) ExportedBindings() map[string]Object {
 	out := map[string]Object{}
 	for _, en := range e.entries {
-		out[en.name] = en.Value
+		out[en.name] = Escape(en.Value)
 	}
 	return out
 }

@@ -53,3 +53,30 @@ func TestREPLIncomplete(t *testing.T) {
 		}
 	}
 }
+
+// an update that fails its type check mustn't leave half a change behind,
+// even when it would have changed the value in place
+func TestREPLFailedUpdateChangesNothing(t *testing.T) {
+	input := strings.Join([]string{
+		"let mut xs: array[int] = [1, 2]",
+		"xs[0] = 5",
+		`let mut ps: map[string, array[int]] = {"a": [1]}`,
+		`ps["a"][0] = 7`,
+		"fn put(v) { xs[1] = v }",
+		`fn deep(v) { ps["a"][0] = v }`,
+		`put("s")`,
+		`deep("s")`,
+		"xs",
+		"ps",
+	}, "\n") + "\n"
+	var out, errOut bytes.Buffer
+	repl.Start(strings.NewReader(input), &out, &errOut)
+	got := out.String()
+	want := "[5, 2]\n" + repl.Prompt + "{a: [7]}\n" + repl.Prompt
+	if !strings.HasSuffix(got, want) {
+		t.Fatalf("values changed by failed updates:\n%s", got)
+	}
+	if strings.Count(errOut.String(), "type mismatch") != 2 {
+		t.Fatalf("expected two type errors, got %q", errOut.String())
+	}
+}

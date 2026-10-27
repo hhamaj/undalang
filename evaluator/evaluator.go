@@ -123,7 +123,7 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 				if step.Index == nil {
 					continue
 				}
-				if keys[i] = EvalWithContext(step.Index, env, ctx); isAbrupt(keys[i]) {
+				if keys[i] = evalPlace(step.Index, env, ctx); isAbrupt(keys[i]) {
 					return keys[i]
 				}
 			}
@@ -131,9 +131,21 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 			if !ok {
 				return newError("identifier not found: %s", node.Name.Value)
 			}
-			if val = withPath(current, node.Path, keys, val); isError(val) {
+			var undo undoLog
+			leaf := val
+			if val = withPath(current, node.Path, keys, val, &undo); isError(val) {
+				undo.revert()
 				return val
 			}
+			// the rest of the value already fit the binding's type, only the
+			// part that changed needs a look
+			res := env.AssignWith(node.Name.Value, val, func(t *ast.TypeAnnotation) bool {
+				return pathFits(t, node.Path, keys, leaf)
+			})
+			if isError(res) {
+				undo.revert()
+			}
+			return res
 		}
 		return env.Assign(node.Name.Value, val)
 	case *ast.ExternStatement:
@@ -182,13 +194,15 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 	case *ast.NilLiteral:
 		return nilObj
 	case *ast.PrefixExpression:
-		right := EvalWithContext(node.Right, env, ctx)
+		right := evalPlace(node.Right, env, ctx)
 		if isAbrupt(right) {
 			return right
 		}
 		return evalPrefixExpression(node.Operator, right)
 	case *ast.InfixExpression:
-		left := EvalWithContext(node.Left, env, ctx)
+		// operators make new values and never hand an operand on, so the
+		// operands don't escape
+		left := evalPlace(node.Left, env, ctx)
 		if isAbrupt(left) {
 			return left
 		}
@@ -198,7 +212,7 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		if node.Operator == "||" && isTruthy(left) {
 			return trueObj
 		}
-		right := EvalWithContext(node.Right, env, ctx)
+		right := evalPlace(node.Right, env, ctx)
 		if isAbrupt(right) {
 			return right
 		}
@@ -212,7 +226,7 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 	case *ast.IfExpression:
 		return evalIfExpression(node, env, ctx)
 	case *ast.Identifier:
-		return evalIdentifier(node, env, ctx)
+		return object.Escape(evalIdentifier(node, env, ctx))
 	case *ast.FunctionLiteral:
 		return &object.Function{
 			Parameters: node.Parameters, ParamTypes: node.ParamTypes, ReturnType: node.ReturnType,
@@ -226,22 +240,8 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		return &object.Array{Elements: elements}
 	case *ast.MapLiteral:
 		return evalMapLiteral(node, env, ctx)
-	case *ast.IndexExpression:
-		left := EvalWithContext(node.Left, env, ctx)
-		if isAbrupt(left) {
-			return left
-		}
-		index := EvalWithContext(node.Index, env, ctx)
-		if isAbrupt(index) {
-			return index
-		}
-		return evalIndexExpression(left, index)
-	case *ast.MemberExpression:
-		obj := EvalWithContext(node.Object, env, ctx)
-		if isAbrupt(obj) {
-			return obj
-		}
-		return evalMemberExpression(obj, node.Property.Value)
+	case *ast.IndexExpression, *ast.MemberExpression:
+		return object.Escape(evalPlace(node.(ast.Expression), env, ctx))
 	case *ast.MatchExpression:
 		return evalMatchExpression(node, env, ctx)
 	case *ast.TryExpression:
@@ -279,12 +279,51 @@ func applyNamed(fn object.Object, args []object.Object, idents []*ast.Identifier
 	return def.New(args, names)
 }
 
-// withPath gives a copy of obj with the value at path replaced by v. keys
-// holds the evaluated index of each [i] step. nothing changes in place
-func withPath(obj object.Object, path []ast.PathStep, keys []object.Object, v object.Object) object.Object {
+// evalPlace reads a name, element or field without letting the value escape,
+// for the left side of `m[k]` and `p.x`. see object.Escape
+func evalPlace(node ast.Expression, env *object.Environment, ctx *Context) object.Object {
+	result := place(node, env, ctx)
+	// errors get the position EvalWithContext would give them
+	if errObj, ok := result.(*object.Error); ok && errObj.Line == 0 {
+		if line, col := ast.Position(node); line > 0 {
+			errObj.File, errObj.Line, errObj.Column = ctx.File, line, col
+		}
+	}
+	return result
+}
+
+func place(node ast.Expression, env *object.Environment, ctx *Context) object.Object {
+	switch node := node.(type) {
+	case *ast.Identifier:
+		return evalIdentifier(node, env, ctx)
+	case *ast.IndexExpression:
+		left := evalPlace(node.Left, env, ctx)
+		if isAbrupt(left) {
+			return left
+		}
+		index := evalPlace(node.Index, env, ctx)
+		if isAbrupt(index) {
+			return index
+		}
+		return evalIndexExpression(left, index)
+	case *ast.MemberExpression:
+		obj := evalPlace(node.Object, env, ctx)
+		if isAbrupt(obj) {
+			return obj
+		}
+		return evalMemberExpression(obj, node.Property.Value)
+	}
+	return EvalWithContext(node, env, ctx)
+}
+
+// withPath gives obj with the value at path replaced by v. keys holds the
+// evaluated index of each [i] step. a container nothing else holds (Owned)
+// changes in place, any other is copied, and the copy is Owned. see
+// object.Escape
+func withPath(obj object.Object, path []ast.PathStep, keys []object.Object, v object.Object, undo *undoLog) object.Object {
 	step := path[0]
 	if step.Index != nil {
-		return withIndex(obj, path, keys, v)
+		return withIndex(obj, path, keys, v, undo)
 	}
 	name := step.Field.Value
 	switch o := obj.(type) {
@@ -293,24 +332,31 @@ func withPath(obj object.Object, path []ast.PathStep, keys []object.Object, v ob
 		if i < 0 {
 			return o.Def.NoField(name)
 		}
+		out := o
+		if !o.Owned {
+			out = &object.Struct{Def: o.Def, Fields: escapeAll(o.Fields), Owned: true}
+		}
 		if len(path) > 1 {
-			if v = withPath(o.Fields[i], path[1:], keys[1:], v); isError(v) {
+			if v = withPath(out.Fields[i], path[1:], keys[1:], v, undo); isError(v) {
 				return v
 			}
 		}
 		if err := o.Def.CheckField(i, v); err != nil {
 			return err
 		}
-		out := &object.Struct{Def: o.Def, Fields: append([]object.Object{}, o.Fields...)}
+		if out == o {
+			old := o.Fields[i]
+			undo.add(func() { o.Fields[i] = old })
+		}
 		out.Fields[i] = v
 		return out
 	case *object.Map:
-		return withKey(o, &object.String{Value: name}, path, keys, v)
+		return withKey(o, &object.String{Value: name}, path, keys, v, undo)
 	}
 	return newError("cannot set field %s on %s", name, obj.Type())
 }
 
-func withIndex(obj object.Object, path []ast.PathStep, keys []object.Object, v object.Object) object.Object {
+func withIndex(obj object.Object, path []ast.PathStep, keys []object.Object, v object.Object, undo *undoLog) object.Object {
 	key := keys[0]
 	switch o := obj.(type) {
 	case *object.Array:
@@ -321,41 +367,113 @@ func withIndex(obj object.Object, path []ast.PathStep, keys []object.Object, v o
 		if i.Value < 0 || i.Value >= int64(len(o.Elements)) {
 			return newError("index %d out of range for an array of length %d", i.Value, len(o.Elements))
 		}
+		out := o
+		if !o.Owned {
+			out = &object.Array{Elements: escapeAll(o.Elements), Owned: true}
+		}
 		if len(path) > 1 {
-			if v = withPath(o.Elements[i.Value], path[1:], keys[1:], v); isError(v) {
+			if v = withPath(out.Elements[i.Value], path[1:], keys[1:], v, undo); isError(v) {
 				return v
 			}
 		}
-		out := &object.Array{Elements: append([]object.Object{}, o.Elements...)}
+		if out == o {
+			old := o.Elements[i.Value]
+			undo.add(func() { o.Elements[i.Value] = old })
+		}
 		out.Elements[i.Value] = v
 		return out
 	case *object.Map:
-		return withKey(o, key, path, keys, v)
+		return withKey(o, key, path, keys, v, undo)
 	}
 	return newError("cannot set an element of %s", obj.Type())
 }
 
 // withKey is withPath for one step into a map, a missing key reads as nil
-func withKey(m *object.Map, key object.Object, path []ast.PathStep, keys []object.Object, v object.Object) object.Object {
+func withKey(m *object.Map, key object.Object, path []ast.PathStep, keys []object.Object, v object.Object, undo *undoLog) object.Object {
 	hk, ok := key.(object.Hashable)
 	if !ok {
 		return newError("unusable as map key: %s", key.Type())
 	}
+	out := m
+	if !m.Owned {
+		out = &object.Map{Pairs: make(map[object.HashKey]object.MapPair, len(m.Pairs)+1), Owned: true}
+		for k, pair := range m.Pairs {
+			out.Pairs[k] = object.MapPair{Key: pair.Key, Value: object.Escape(pair.Value)}
+		}
+	}
 	if len(path) > 1 {
 		var inner object.Object = nilObj
-		if pair, ok := m.Pairs[hk.HashKey()]; ok {
+		if pair, ok := out.Pairs[hk.HashKey()]; ok {
 			inner = pair.Value
 		}
-		if v = withPath(inner, path[1:], keys[1:], v); isError(v) {
+		if v = withPath(inner, path[1:], keys[1:], v, undo); isError(v) {
 			return v
 		}
 	}
-	pairs := make(map[object.HashKey]object.MapPair, len(m.Pairs)+1)
-	for k, pair := range m.Pairs {
-		pairs[k] = pair
+	if out == m {
+		old, had := m.Pairs[hk.HashKey()]
+		undo.add(func() {
+			if had {
+				m.Pairs[hk.HashKey()] = old
+			} else {
+				delete(m.Pairs, hk.HashKey())
+			}
+		})
 	}
-	pairs[hk.HashKey()] = object.MapPair{Key: key, Value: v}
-	return &object.Map{Pairs: pairs}
+	out.Pairs[hk.HashKey()] = object.MapPair{Key: key, Value: v}
+	return out
+}
+
+// undoLog takes back in-place changes when a later check of the same
+// assignment fails, the REPL keeps going after an error and mustn't see
+// half an assignment
+type undoLog []func()
+
+func (u *undoLog) add(f func()) { *u = append(*u, f) }
+
+func (u *undoLog) revert() {
+	for i := len(*u) - 1; i >= 0; i-- {
+		(*u)[i]()
+	}
+}
+
+// pathFits reports whether a binding typed t still fits after the value at
+// path became v, given that it fit before. it follows array[...] and
+// map[...] down the path and checks the new part only. false means it
+// can't tell, then the whole value gets checked
+func pathFits(t *ast.TypeAnnotation, path []ast.PathStep, keys []object.Object, v object.Object) bool {
+	for i, step := range path {
+		switch {
+		case t == nil:
+			return true
+		case t.Name == "array" && len(t.Params) == 1 && step.Index != nil:
+			t = t.Params[0]
+		case t.Name == "map" && len(t.Params) == 2:
+			var key object.Object = keys[i]
+			if step.Field != nil {
+				key = &object.String{Value: step.Field.Value}
+			}
+			if !object.Fits(t.Params[0], key) {
+				return false
+			}
+			t = t.Params[1]
+		default:
+			// a struct checks its own fields, anything else takes any
+			// element, and the container keeps its type
+			return true
+		}
+	}
+	return t == nil || object.Fits(t, v)
+}
+
+// escapeAll copies a container's items for a copy of it. the old container
+// still holds them too, so none of them is Owned anymore
+func escapeAll(items []object.Object) []object.Object {
+	out := make([]object.Object, len(items))
+	for i, item := range items {
+		out[i] = object.Escape(item)
+	}
+	return out
 }
 
 func evalProgram(program *ast.Program, env *object.Environment, ctx *Context) object.Object {
@@ -417,7 +535,7 @@ func loopControl(result object.Object) (stop bool, value object.Object) {
 
 func evalWhileStatement(node *ast.WhileStatement, env *object.Environment, ctx *Context) object.Object {
 	for {
-		condition := EvalWithContext(node.Condition, env, ctx)
+		condition := evalPlace(node.Condition, env, ctx)
 		if isAbrupt(condition) {
 			return condition
 		}
@@ -640,7 +758,7 @@ func evalLogical(operator string, left, right object.Object) bool {
 }
 
 func evalIfExpression(ie *ast.IfExpression, env *object.Environment, ctx *Context) object.Object {
-	condition := EvalWithContext(ie.Condition, env, ctx)
+	condition := evalPlace(ie.Condition, env, ctx)
 	if isAbrupt(condition) {
 		return condition
 	}
@@ -995,7 +1113,9 @@ func applyFunctionWithContext(fn object.Object, args []object.Object, ctx *Conte
 		}
 		return evaluated
 	case *object.Builtin:
-		return fn.Fn(args...)
+		// a builtin can hand back an element of its argument (arrays.first),
+		// that's a second holder like any other read
+		return object.Escape(fn.Fn(args...))
 	case *object.StructDef:
 		return fn.New(args, nil)
 	default:

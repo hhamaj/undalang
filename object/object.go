@@ -176,6 +176,8 @@ func (b *Builtin) Inspect() string { return "builtin function" }
 
 type Array struct {
 	Elements []Object
+	// Owned is set while one place alone holds the array, see Escape
+	Owned bool
 }
 
 func (a *Array) Type() Type { return ArrayObj }
@@ -224,6 +226,8 @@ type MapPair struct {
 
 type Map struct {
 	Pairs map[HashKey]MapPair
+	// Owned is set while one place alone holds the map, see Escape
+	Owned bool
 }
 
 func (m *Map) Type() Type { return MapObj }
@@ -324,6 +328,8 @@ func (d *StructDef) New(args []Object, names []string) Object {
 type Struct struct {
 	Def    *StructDef
 	Fields []Object
+	// Owned is set while one place alone holds the struct, see Escape
+	Owned bool
 }
 
 func (s *Struct) Type() Type { return Type(s.Def.Name) }
@@ -407,3 +413,23 @@ type ExitSignal struct {
 
 func (e *ExitSignal) Type() Type      { return "EXIT" }
 func (e *ExitSignal) Inspect() string { return fmt.Sprintf("exit(%d)", e.Code) }
+
+// Escape clears Owned on a value that's about to be held in a second place.
+//
+// arrays, maps and structs are values, `m[k] = v` gives m an updated copy.
+// copying on every update makes a loop that fills a map quadratic, so the
+// copy an update makes is marked Owned: nothing else can see it, and the
+// next update may change it in place. every read that lets a value go
+// somewhere else (bound to a name, passed, stored, iterated) calls Escape,
+// reading an element out of it (`m[k]`, `p.x`) does not
+func Escape(o Object) Object {
+	switch o := o.(type) {
+	case *Array:
+		o.Owned = false
+	case *Map:
+		o.Owned = false
+	case *Struct:
+		o.Owned = false
+	}
+	return o
+}

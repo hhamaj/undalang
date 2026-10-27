@@ -101,7 +101,7 @@ go build -o unda ./cmd/unda
 | **Execution** | Two backends behind one front end. `interp` is a tree-walking interpreter in Go: instant start, used by the REPL. `native` translates the program to C and compiles it with the system compiler (`cc -O2`). The test suite runs every program through both and compares stdout, stderr and exit code. |
 | **Memory management** | Garbage collected. The interpreter uses Go's GC; native executables carry a conservative mark-and-sweep collector that scans the stack and registered roots. Manual memory exists only as `mem` buffers, for handing memory to C. |
 | **Memory safety** | Safe for Unda code: no pointers, checked indexing, checked buffers, no use after free. The only unsafe surface is C interop (`extern`). [Details](#memory-safety). |
-| **Values** | Bindings are immutable unless declared `let mut`. Arrays, maps and structs are values: assigning or updating gives a new value, other holders keep the old one. `mem` buffers are the one shared, mutable value. |
+| **Values** | Bindings are immutable unless declared `let mut`. Arrays, maps and structs are values: assigning or updating gives a new value, other holders keep the old one. Underneath, an update changes the value in place when nothing else holds it. `mem` buffers are the one shared, mutable value. |
 | **Numbers** | `int` is a 64-bit two's complement integer that wraps on overflow (`9223372036854775807 + 1` is the minimum int), `float` is a 64-bit IEEE double. `7 / 2` is `3`, `7.0 / 2` is `3.5`. `int`, `float` and `string` convert between them and from text. |
 | **Strings** | Immutable, UTF-8, indexed and measured by character: `len("çay")` is 3. |
 | **Errors** | Expected failures are values: `ok(v)` / `err(e)`, unwrapped with `match` or `?`. Bugs (type mismatches, bad arguments) stop the program with `file:line:col`, exit code 1, identically in both backends. |
@@ -146,21 +146,21 @@ Wall-clock time in milliseconds, best of several runs, including process start. 
 
 | benchmark | C (`-O2`) | **Unda native** | Python 3.14 | Unda interp |
 |---|---:|---:|---:|---:|
-| `fib(32)`, recursive calls | 3.4 | **27** | 229 | 1854 |
-| primes below 300000, nested loops | 21.5 | **26** | 1582 | 2741 |
-| map, filter and reduce over 1M ints | 10.3 | **52** | 182 | 434 |
-| 200000 updates to a 1000-key map | — | **5890** | 349 | 28213 |
-| `hello` (startup) | 0.5 | **0.8** | 15.8 | 1.6 |
+| `fib(32)`, recursive calls | 3.2 | **28** | 230 | 2104 |
+| primes below 300000, nested loops | 21.3 | **27** | 1658 | 2956 |
+| map, filter and reduce over 1M ints | 11.9 | **60** | 187 | 471 |
+| 200000 updates to a 1000-key map | — | **87** | 100 | 245 |
+| `hello` (startup) | 0.5 | **0.8** | 14.2 | 1.7 |
 
 <sub>AMD Ryzen 5 5600, Linux, gcc 16.2, Go 1.26. Native times exclude compilation: `unda build` takes about 0.5 s, most of it compiling the C runtime. Peak memory for the map/filter/reduce run: C 20 MB, Unda native 47 MB, Python 65 MB, Unda interp 115 MB. The programs are in [`bench/`](./bench).</sub>
 
 What the numbers say:
-- **Loops over integers run close to C** (primes: 26 ms against 21.5). The generated C does integer arithmetic inline.
+- **Loops over integers run close to C** (primes: 27 ms against 21.3). The generated C does integer arithmetic inline.
 - **Function calls cost about 8x C.** Every value is a tagged 16-byte struct, and each call sets up a frame, records its source location and counts depth for the recursion limit. Still about 8x faster than Python.
-- **Map updates are slow.** Maps are values, so `m[k] = v` copies the map: a loop that updates a 1000-key map is 17x slower than Python. This is the biggest performance gap today.
+- **Updating a map or array in a loop is as fast as in Python**, even though they are values. An update changes the value in place when nothing else holds it and copies it otherwise, so no other holder ever sees the change. `arrays.append` still copies, so growing an array one element at a time is quadratic.
 - **The interpreter is slower than CPython** on calls and loops. It is meant for the REPL and quick runs; `unda build` is the fast path.
 
-Compiling typed functions to plain C types, cheaper calls and maps that don't copy on every update are the next steps, see the [roadmap](./ROADMAP.md).
+Compiling typed functions to plain C types and cheaper calls are the next steps, see the [roadmap](./ROADMAP.md).
 
 ## Status and limitations
 

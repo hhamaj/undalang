@@ -55,16 +55,17 @@ typedef struct UType { unsigned mask; const char *sname; const struct UType *ele
  * a type has a NULL types entry, tnames spell the types for messages
  */
 struct UStructDef { const char *name; int n; const char **fields; const UType *const *types; const char **tnames; };
-struct UStruct { UStructDef *def; UValue fields[]; };
+struct UStruct { UStructDef *def; bool owned; UValue fields[]; };
 
 struct URes { bool ok; UValue v; };
 
 /* a mem buffer. data is malloc'd and stays put, C may hold on to it */
 struct UBuf { size_t size; unsigned char *data; bool freed; };
 
-struct UArr { size_t len, cap; UValue *items; };
+/* owned: one place alone holds it, see u_escape */
+struct UArr { size_t len, cap; UValue *items; bool owned; };
 typedef struct { UValue key, value; } UEntry;
-struct UMap { size_t len, cap; UEntry *entries; int64_t *index; size_t icap; };
+struct UMap { size_t len, cap; UEntry *entries; int64_t *index; size_t icap; bool owned; };
 
 typedef struct UFrame { struct UFrame *parent; UValue *slots; } UFrame;
 typedef UValue (*UCode)(UFrame *env, int argc, UValue *argv);
@@ -321,6 +322,23 @@ static UValue uv_result(bool ok, UValue inner) {
     r->v = inner;
     UValue v; v.tag = U_RES; v.as.r = r;
     return v;
+}
+
+/*
+ * arrays, maps and structs are values, `m[k] = v` gives m an updated copy.
+ * the copy an update makes is owned: nothing else holds it, so the next
+ * update may change it in place. every read that lets a value go somewhere
+ * else (bound, passed, stored, iterated, returned by a builtin) clears that,
+ * reading an element out of it doesn't. object.Escape is the interpreter's
+ * copy
+ */
+static inline void u_escape(UValue v) {
+    switch (v.tag) {
+    case U_ARR: v.as.a->owned = false; break;
+    case U_MAP: v.as.m->owned = false; break;
+    case U_STRUCT: v.as.st->owned = false; break;
+    default: break;
+    }
 }
 
 static UArr *u_arr_new(size_t cap) {
@@ -962,21 +980,50 @@ typedef struct { const char *field; UValue key; } UStep;
 
 static UValue u_with_path(UValue obj, int n, const UStep *path, UValue v);
 
+/*
+ * whether a binding typed t still fits after the value at path became leaf,
+ * given it fit before. follows array[...] and map[...] down the path and
+ * checks the new part only, false means check the whole value.
+ * evaluator.pathFits is the interpreter's copy
+ */
+static bool u_path_fits(const UType *t, int n, const UStep *path, UValue leaf) {
+    for (int i = 0; i < n; i++) {
+        if (!t || t->sname || !t->elem) return true;
+        if (t->key) {
+            UValue key = path[i].field ? uv_cstr(path[i].field) : path[i].key;
+            if (!u_fits(t->key, key)) return false;
+        } else if (path[i].field) {
+            return true;
+        }
+        t = t->elem;
+    }
+    return !t || u_fits(t, leaf);
+}
+
 /* u_with_path for one step into a map, a missing key reads as nil */
 static UValue u_with_key(UMap *src, UValue key, int n, const UStep *path, UValue v) {
     if (!u_hashable(key)) u_panic("unusable as map key: %s", u_type_name(key));
-    if (n > 1) {
-        int64_t idx = u_map_find(src, key);
-        v = u_with_path(idx < 0 ? uv_nil() : src->entries[idx].value, n - 1, path + 1, v);
+    UMap *m = src;
+    if (!src->owned) {
+        m = u_map_copy(src);
+        m->owned = true;
+        for (size_t i = 0; i < m->len; i++) u_escape(m->entries[i].value);
     }
-    UMap *m = u_map_copy(src);
+    if (n > 1) {
+        int64_t idx = u_map_find(m, key);
+        v = u_with_path(idx < 0 ? uv_nil() : m->entries[idx].value, n - 1, path + 1, v);
+    }
     u_map_set(m, key, v);
     return uv_mapv(m);
 }
 
 /*
- * a copy of obj with the value at path replaced by v, for `x.a[i] = v`.
- * evaluator.withPath is the interpreter's copy. nothing changes in place
+ * obj with the value at path replaced by v, for `x.a[i] = v`. an owned
+ * container changes in place, any other is copied and the copy is owned.
+ * the copy's items are held by the old container too, so they get escaped.
+ * a failed check stops the program, so nothing has to be taken back here
+ * (the interpreter undoes in-place changes for the REPL).
+ * evaluator.withPath is the interpreter's copy
  */
 static UValue u_with_path(UValue obj, int n, const UStep *path, UValue v) {
     const char *name = path[0].field;
@@ -984,13 +1031,18 @@ static UValue u_with_path(UValue obj, int n, const UStep *path, UValue v) {
         UValue key = path[0].key;
         if (obj.tag == U_ARR) {
             if (key.tag != U_INT) u_panic("index operator not supported: ARRAY[%s]", u_type_name(key));
-            UArr *src = obj.as.a;
-            if (key.as.i < 0 || (uint64_t)key.as.i >= src->len)
-                u_panic("index %lld out of range for an array of length %zu", (long long)key.as.i, src->len);
-            if (n > 1) v = u_with_path(src->items[key.as.i], n - 1, path + 1, v);
-            UArr *a = u_arr_new(src->len);
-            memcpy(a->items, src->items, src->len * sizeof(UValue));
-            a->len = src->len;
+            UArr *a = obj.as.a;
+            if (key.as.i < 0 || (uint64_t)key.as.i >= a->len)
+                u_panic("index %lld out of range for an array of length %zu", (long long)key.as.i, a->len);
+            if (!a->owned) {
+                UArr *src = a;
+                a = u_arr_new(src->len);
+                memcpy(a->items, src->items, src->len * sizeof(UValue));
+                a->len = src->len;
+                a->owned = true;
+                for (size_t i = 0; i < a->len; i++) u_escape(a->items[i]);
+            }
+            if (n > 1) v = u_with_path(a->items[key.as.i], n - 1, path + 1, v);
             a->items[key.as.i] = v;
             return uv_arrv(a);
         }
@@ -1001,11 +1053,16 @@ static UValue u_with_path(UValue obj, int n, const UStep *path, UValue v) {
         UStructDef *d = obj.as.st->def;
         int i = u_field_index(d, name);
         if (i < 0) u_panic("%s has no field \"%s\"", d->name, name);
-        if (n > 1) v = u_with_path(obj.as.st->fields[i], n - 1, path + 1, v);
+        UStruct *st = obj.as.st;
+        if (!st->owned) {
+            st = u_alloc(sizeof(UStruct) + (size_t)(d->n ? d->n : 1) * sizeof(UValue));
+            st->def = d;
+            st->owned = true;
+            memcpy(st->fields, obj.as.st->fields, (size_t)d->n * sizeof(UValue));
+            for (int j = 0; j < d->n; j++) u_escape(st->fields[j]);
+        }
+        if (n > 1) v = u_with_path(st->fields[i], n - 1, path + 1, v);
         u_check_field(d, i, v);
-        UStruct *st = u_alloc(sizeof(UStruct) + (size_t)(d->n ? d->n : 1) * sizeof(UValue));
-        st->def = d;
-        memcpy(st->fields, obj.as.st->fields, (size_t)d->n * sizeof(UValue));
         st->fields[i] = v;
         UValue out; out.tag = U_STRUCT; out.as.st = st;
         return out;
@@ -1037,7 +1094,12 @@ static UValue u_member(UValue obj, const char *name) {
  * so a callback that already ran mustn't leave its own location behind
  */
 static UValue u_call(UValue f, int argc, UValue *argv) {
-    if (f.tag == U_BUILTIN) return f.as.fn->code(NULL, argc, argv);
+    if (f.tag == U_BUILTIN) {
+        /* a builtin can hand back an element of its argument (arrays.first) */
+        UValue r = f.as.fn->code(NULL, argc, argv);
+        u_escape(r);
+        return r;
+    }
     if (f.tag == U_SDEF) return u_struct_new(f.as.sd, argc, argv, NULL);
     if (f.tag != U_FN) u_panic("not a function: %s", u_type_name(f));
     if (argc != f.as.fn->arity) u_panic("wrong number of arguments: expected %d, got %d", f.as.fn->arity, argc);
@@ -2782,6 +2844,7 @@ static UValue u_module_from_frame(const char *name, int count, const char **name
         UValue v = frame->slots[slots[i]];
         if (v.tag == U_UNDEF) continue;
         m->names[m->count] = names[i];
+        u_escape(v);
         m->values[m->count] = v;
         m->count++;
     }
