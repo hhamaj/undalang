@@ -43,6 +43,14 @@ func TestSemanticReportsErrors(t *testing.T) {
 		{"int arg type", "int(true)", []string{"1:1 int argument 1 must be INTEGER|FLOAT|STRING, got BOOLEAN"}},
 		{"float result type", `let s = float("1") + "x"`, []string{"1:20 type mismatch: FLOAT + STRING"}},
 		{"string arity", "string()", []string{"1:1 string expects 1 argument, got 0"}},
+		{"index assign immutable", "let m = {}\nm[\"a\"] = 1", []string{`2:1 cannot assign to immutable binding "m"`}},
+		{"index assign type", "let mut xs: array[int] = [1]\nxs[0] = \"s\"", []string{"2:1 type mismatch: array[int] element expects int, got STRING"}},
+		{"index assign key", "let mut m: map[string, int] = {}\nm[1] = 2", []string{"2:1 type mismatch: map[string, int] key expects string, got INTEGER"}},
+		{"index assign array key", "let mut xs: array = []\nxs[\"a\"] = 1", []string{"2:1 index operator not supported: ARRAY[STRING]"}},
+		{"index assign map key", "let mut m: map = {}\nm[[1]] = 1", []string{"2:1 unusable as map key: ARRAY"}},
+		{"index assign int", "let mut n: int = 1\nn[0] = 1", []string{"2:1 cannot set an element of INTEGER"}},
+		{"index assign nested", "struct P { x: int }\nlet mut ps: array[P] = []\nps[0].x = \"s\"", []string{"3:1 type mismatch: field x of P expects int, got STRING"}},
+		{"index assign undefined", "let mut m = {}\nm[nope] = 1", []string{"2:3 identifier not found: nope"}},
 		{"builtin arg type", `import "strings" as s
 s.upper(5)`, []string{"2:3 strings.upper argument 1 must be STRING, got INTEGER"}},
 		{"pipeline arity", `import "strings" as s

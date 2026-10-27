@@ -116,12 +116,22 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		if isAbrupt(val) {
 			return val
 		}
-		if len(node.Fields) > 0 {
+		if len(node.Path) > 0 {
+			// the value runs first, then the indexes, left to right
+			keys := make([]object.Object, len(node.Path))
+			for i, step := range node.Path {
+				if step.Index == nil {
+					continue
+				}
+				if keys[i] = EvalWithContext(step.Index, env, ctx); isAbrupt(keys[i]) {
+					return keys[i]
+				}
+			}
 			current, ok := env.Get(node.Name.Value)
 			if !ok {
 				return newError("identifier not found: %s", node.Name.Value)
 			}
-			if val = withFields(current, node.Fields, val); isError(val) {
+			if val = withPath(current, node.Path, keys, val); isError(val) {
 				return val
 			}
 		}
@@ -269,18 +279,22 @@ func applyNamed(fn object.Object, args []object.Object, idents []*ast.Identifier
 	return def.New(args, names)
 }
 
-// withFields returns a copy of obj with the field path set to v. structs and
-// maps both take fields, a map field is its string key
-func withFields(obj object.Object, fields []*ast.Identifier, v object.Object) object.Object {
-	name := fields[0].Value
+// withPath gives a copy of obj with the value at path replaced by v. keys
+// holds the evaluated index of each [i] step. nothing changes in place
+func withPath(obj object.Object, path []ast.PathStep, keys []object.Object, v object.Object) object.Object {
+	step := path[0]
+	if step.Index != nil {
+		return withIndex(obj, path, keys, v)
+	}
+	name := step.Field.Value
 	switch o := obj.(type) {
 	case *object.Struct:
 		i := o.Def.FieldIndex(name)
 		if i < 0 {
 			return o.Def.NoField(name)
 		}
-		if len(fields) > 1 {
-			if v = withFields(o.Fields[i], fields[1:], v); isError(v) {
+		if len(path) > 1 {
+			if v = withPath(o.Fields[i], path[1:], keys[1:], v); isError(v) {
 				return v
 			}
 		}
@@ -291,24 +305,57 @@ func withFields(obj object.Object, fields []*ast.Identifier, v object.Object) ob
 		out.Fields[i] = v
 		return out
 	case *object.Map:
-		key := &object.String{Value: name}
-		if len(fields) > 1 {
-			var inner object.Object = nilObj
-			if pair, ok := o.Pairs[key.HashKey()]; ok {
-				inner = pair.Value
-			}
-			if v = withFields(inner, fields[1:], v); isError(v) {
+		return withKey(o, &object.String{Value: name}, path, keys, v)
+	}
+	return newError("cannot set field %s on %s", name, obj.Type())
+}
+
+func withIndex(obj object.Object, path []ast.PathStep, keys []object.Object, v object.Object) object.Object {
+	key := keys[0]
+	switch o := obj.(type) {
+	case *object.Array:
+		i, ok := key.(*object.Integer)
+		if !ok {
+			return newError("index operator not supported: ARRAY[%s]", key.Type())
+		}
+		if i.Value < 0 || i.Value >= int64(len(o.Elements)) {
+			return newError("index %d out of range for an array of length %d", i.Value, len(o.Elements))
+		}
+		if len(path) > 1 {
+			if v = withPath(o.Elements[i.Value], path[1:], keys[1:], v); isError(v) {
 				return v
 			}
 		}
-		pairs := make(map[object.HashKey]object.MapPair, len(o.Pairs)+1)
-		for k, pair := range o.Pairs {
-			pairs[k] = pair
-		}
-		pairs[key.HashKey()] = object.MapPair{Key: key, Value: v}
-		return &object.Map{Pairs: pairs}
+		out := &object.Array{Elements: append([]object.Object{}, o.Elements...)}
+		out.Elements[i.Value] = v
+		return out
+	case *object.Map:
+		return withKey(o, key, path, keys, v)
 	}
-	return newError("cannot set field %s on %s", name, obj.Type())
+	return newError("cannot set an element of %s", obj.Type())
+}
+
+// withKey is withPath for one step into a map, a missing key reads as nil
+func withKey(m *object.Map, key object.Object, path []ast.PathStep, keys []object.Object, v object.Object) object.Object {
+	hk, ok := key.(object.Hashable)
+	if !ok {
+		return newError("unusable as map key: %s", key.Type())
+	}
+	if len(path) > 1 {
+		var inner object.Object = nilObj
+		if pair, ok := m.Pairs[hk.HashKey()]; ok {
+			inner = pair.Value
+		}
+		if v = withPath(inner, path[1:], keys[1:], v); isError(v) {
+			return v
+		}
+	}
+	pairs := make(map[object.HashKey]object.MapPair, len(m.Pairs)+1)
+	for k, pair := range m.Pairs {
+		pairs[k] = pair
+	}
+	pairs[hk.HashKey()] = object.MapPair{Key: key, Value: v}
+	return &object.Map{Pairs: pairs}
 }
 
 func evalProgram(program *ast.Program, env *object.Environment, ctx *Context) object.Object {

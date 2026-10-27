@@ -68,14 +68,20 @@ func (ls *LetStatement) String() string {
 	return out.String()
 }
 
-// AssignStatement is `name = value`, or `name.a.b = value` when Fields is set.
-// a field assignment builds a copy with that field changed and assigns the
-// copy to name, values never change in place
+// AssignStatement is `name = value`, or `name.a[i].b = value` when Path is
+// set. assigning to a path builds a copy with that part changed and assigns
+// the copy to name, values never change in place
 type AssignStatement struct {
-	Token  token.Token
-	Name   *Identifier
-	Fields []*Identifier
-	Value  Expression
+	Token token.Token
+	Name  *Identifier
+	Path  []PathStep
+	Value Expression
+}
+
+// PathStep is one step of an assignment path, `.Field` or `[Index]`
+type PathStep struct {
+	Field *Identifier
+	Index Expression
 }
 
 func (as *AssignStatement) statementNode()       {}
@@ -83,8 +89,12 @@ func (as *AssignStatement) TokenLiteral() string { return as.Token.Literal }
 func (as *AssignStatement) String() string {
 	var out bytes.Buffer
 	out.WriteString(as.Name.String())
-	for _, f := range as.Fields {
-		out.WriteString("." + f.String())
+	for _, step := range as.Path {
+		if step.Field != nil {
+			out.WriteString("." + step.Field.String())
+		} else {
+			out.WriteString("[" + step.Index.String() + "]")
+		}
 	}
 	out.WriteString(" = ")
 	if as.Value != nil {

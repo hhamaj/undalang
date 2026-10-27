@@ -174,7 +174,7 @@ func TestParserReportsOneErrorPerStatement(t *testing.T) {
 		"struct P { a, a }":       {"line 1:15 duplicate field a in P"},
 		"struct STRING { a }":     {"line 1:8 STRING is a builtin type name"},
 		"1 |> P(a: 2)":            {"line 1:12 named arguments can't follow |>, the piped value has no name"},
-		"f(1).x = 2":              {"line 1:6 can only assign to fields of a named value"},
+		"f(1).x = 2":              {"line 1:6 can only assign to fields and elements of a named value"},
 		"extern \"m\" { fn cos(x: double) -> f64 }": {`line 1:24 unknown C type "double" (did you mean "f64"?)`},
 		"extern \"m\" { fn cos(x) }":                {"line 1:22 expected next token to be :, got ) instead"},
 		"let m: map[float, int] = {}":               {`line 1:22 map keys can't be float, use int, string, bool, nil or any`},

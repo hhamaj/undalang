@@ -516,7 +516,14 @@ func (c *checker) stmt(s ast.Statement, sc *scope) Type {
 		return t
 	case *ast.AssignStatement:
 		t := c.expr(s.Value, sc)
-		c.assign(s, sc, t)
+		// the value runs first, then the indexes along the path, left to right
+		idx := make([]Type, len(s.Path))
+		for i, step := range s.Path {
+			if step.Index != nil {
+				idx[i] = c.expr(step.Index, sc)
+			}
+		}
+		c.assign(s, sc, t, idx)
 		return t
 	case *ast.ReturnStatement:
 		t := c.expr(s.ReturnValue, sc)
@@ -646,7 +653,7 @@ func annotName(a *ast.TypeAnnotation) string {
 	return a.Name
 }
 
-func (c *checker) assign(s *ast.AssignStatement, sc *scope, t Type) {
+func (c *checker) assign(s *ast.AssignStatement, sc *scope, t Type, idx []Type) {
 	name := s.Name.Value
 	cands := lookup(sc, name)
 	if len(cands) == 0 {
@@ -659,9 +666,9 @@ func (c *checker) assign(s *ast.AssignStatement, sc *scope, t Type) {
 	}
 	if !anyMutable || (cands[0].Direct && !cands[0].Sym.Mutable) {
 		c.errorf(s, "cannot assign to immutable binding %q", name)
-	} else if len(s.Fields) > 0 {
+	} else if len(s.Path) > 0 {
 		if cands[0].Direct {
-			c.fieldAssign(s, cands[0].Sym.Type, t)
+			c.pathAssign(s, cands[0].Sym.Type, cands[0].Sym.Annot, t, idx)
 		}
 	} else if cands[0].Direct && !fits(t, cands[0].Sym.Annot) {
 		c.errorf(s, "type mismatch: %s expects %s, got %s", name, cands[0].Sym.Annot, t.Name())
@@ -669,10 +676,56 @@ func (c *checker) assign(s *ast.AssignStatement, sc *scope, t Type) {
 	c.mod.Assigns[s] = &Ref{Name: name, Candidates: cands}
 }
 
-// fieldAssign checks `x.a.b = v` as far as the types along the path are
-// known
-func (c *checker) fieldAssign(s *ast.AssignStatement, cur, v Type) {
-	for i, f := range s.Fields {
+// pathAssign checks `x.a[i].b = v` as far as the types along the path are
+// known. ann follows the declared types, an untyped array literal still
+// takes any element
+func (c *checker) pathAssign(s *ast.AssignStatement, cur Type, ann *ast.TypeAnnotation, v Type, idx []Type) {
+	for i, step := range s.Path {
+		last := i == len(s.Path)-1
+		if step.Index != nil {
+			k := idx[i]
+			var keyAnn, elemAnn *ast.TypeAnnotation
+			switch {
+			case !cur.Kind.Known():
+				return
+			case cur.Kind&(KArray|KMap) == 0:
+				c.errorf(s, "cannot set an element of %s", cur.Name())
+				return
+			case cur.Kind != KArray && cur.Kind != KMap:
+				// array|nil and the like, only the runtime knows
+				return
+			case cur.Kind == KArray:
+				if k.Kind.Known() && k.Kind != KInt {
+					c.errorf(s, "index operator not supported: ARRAY[%s]", k.Kind)
+					return
+				}
+				if ann != nil && ann.Name == "array" && len(ann.Params) == 1 {
+					elemAnn = ann.Params[0]
+				}
+			case cur.Kind == KMap:
+				if k.Kind.Known() && k.Kind&KHash == 0 {
+					c.errorf(s, "unusable as map key: %s", k.Kind)
+					return
+				}
+				if ann != nil && ann.Name == "map" && len(ann.Params) == 2 {
+					keyAnn, elemAnn = ann.Params[0], ann.Params[1]
+				}
+			}
+			if !fits(k, keyAnn) {
+				c.errorf(s, "type mismatch: %s key expects %s, got %s", ann, keyAnn, k.Name())
+				return
+			}
+			if last && !fits(v, elemAnn) {
+				c.errorf(s, "type mismatch: %s element expects %s, got %s", ann, elemAnn, v.Name())
+			}
+			next := unknown()
+			if cur.Elem != nil {
+				next = *cur.Elem
+			}
+			cur, ann = next, elemAnn
+			continue
+		}
+		f := step.Field
 		if cur.Kind != KStruct || cur.Struct == nil {
 			if cur.Kind.Known() && cur.Kind != KMap {
 				c.errorf(s, "cannot set field %s on %s", f.Value, cur.Name())
@@ -680,15 +733,15 @@ func (c *checker) fieldAssign(s *ast.AssignStatement, cur, v Type) {
 			return
 		}
 		decl := cur.Struct
-		idx := fieldIndex(decl, f.Value)
-		if idx < 0 {
+		fi := fieldIndex(decl, f.Value)
+		if fi < 0 {
 			c.errorf(s, "%s has no field %q", decl.Name.Value, f.Value)
 			return
 		}
-		if i == len(s.Fields)-1 && !fits(v, decl.Types[idx]) {
-			c.errorf(s, "type mismatch: field %s of %s expects %s, got %s", f.Value, decl.Name.Value, decl.Types[idx], v.Name())
+		if last && !fits(v, decl.Types[fi]) {
+			c.errorf(s, "type mismatch: field %s of %s expects %s, got %s", f.Value, decl.Name.Value, decl.Types[fi], v.Name())
 		}
-		cur = c.annotType(decl.Types[idx])
+		cur, ann = c.annotType(decl.Types[fi]), decl.Types[fi]
 	}
 }
 

@@ -957,14 +957,51 @@ static UValue u_struct_new(UStructDef *d, int argc, UValue *argv, const char **n
     return v;
 }
 
-/* returns a copy of obj with the field path set to v, see evaluator.withFields */
-static UValue u_with_fields(UValue obj, int n, const char **fields, UValue v) {
-    const char *name = fields[0];
+/* one step of an assignment path: .field when field is set, [key] otherwise */
+typedef struct { const char *field; UValue key; } UStep;
+
+static UValue u_with_path(UValue obj, int n, const UStep *path, UValue v);
+
+/* u_with_path for one step into a map, a missing key reads as nil */
+static UValue u_with_key(UMap *src, UValue key, int n, const UStep *path, UValue v) {
+    if (!u_hashable(key)) u_panic("unusable as map key: %s", u_type_name(key));
+    if (n > 1) {
+        int64_t idx = u_map_find(src, key);
+        v = u_with_path(idx < 0 ? uv_nil() : src->entries[idx].value, n - 1, path + 1, v);
+    }
+    UMap *m = u_map_copy(src);
+    u_map_set(m, key, v);
+    return uv_mapv(m);
+}
+
+/*
+ * a copy of obj with the value at path replaced by v, for `x.a[i] = v`.
+ * evaluator.withPath is the interpreter's copy. nothing changes in place
+ */
+static UValue u_with_path(UValue obj, int n, const UStep *path, UValue v) {
+    const char *name = path[0].field;
+    if (!name) {
+        UValue key = path[0].key;
+        if (obj.tag == U_ARR) {
+            if (key.tag != U_INT) u_panic("index operator not supported: ARRAY[%s]", u_type_name(key));
+            UArr *src = obj.as.a;
+            if (key.as.i < 0 || (uint64_t)key.as.i >= src->len)
+                u_panic("index %lld out of range for an array of length %zu", (long long)key.as.i, src->len);
+            if (n > 1) v = u_with_path(src->items[key.as.i], n - 1, path + 1, v);
+            UArr *a = u_arr_new(src->len);
+            memcpy(a->items, src->items, src->len * sizeof(UValue));
+            a->len = src->len;
+            a->items[key.as.i] = v;
+            return uv_arrv(a);
+        }
+        if (obj.tag == U_MAP) return u_with_key(obj.as.m, key, n, path, v);
+        u_panic("cannot set an element of %s", u_type_name(obj));
+    }
     if (obj.tag == U_STRUCT) {
         UStructDef *d = obj.as.st->def;
         int i = u_field_index(d, name);
         if (i < 0) u_panic("%s has no field \"%s\"", d->name, name);
-        if (n > 1) v = u_with_fields(obj.as.st->fields[i], n - 1, fields + 1, v);
+        if (n > 1) v = u_with_path(obj.as.st->fields[i], n - 1, path + 1, v);
         u_check_field(d, i, v);
         UStruct *st = u_alloc(sizeof(UStruct) + (size_t)(d->n ? d->n : 1) * sizeof(UValue));
         st->def = d;
@@ -973,16 +1010,7 @@ static UValue u_with_fields(UValue obj, int n, const char **fields, UValue v) {
         UValue out; out.tag = U_STRUCT; out.as.st = st;
         return out;
     }
-    if (obj.tag == U_MAP) {
-        UValue key = uv_cstr(name);
-        if (n > 1) {
-            int64_t idx = u_map_find(obj.as.m, key);
-            v = u_with_fields(idx < 0 ? uv_nil() : obj.as.m->entries[idx].value, n - 1, fields + 1, v);
-        }
-        UMap *m = u_map_copy(obj.as.m);
-        u_map_set(m, key, v);
-        return uv_mapv(m);
-    }
+    if (obj.tag == U_MAP) return u_with_key(obj.as.m, uv_cstr(name), n, path, v);
     u_panic("cannot set field %s on %s", name, u_type_name(obj));
 }
 

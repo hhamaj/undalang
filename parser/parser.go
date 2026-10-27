@@ -167,7 +167,7 @@ func (p *Parser) parseStatement() ast.Statement {
 	case p.curTokenIs(token.Extern):
 		return p.parseExternStatement()
 	default:
-		return p.parseExpressionOrFieldAssign()
+		return p.parseExpressionOrPathAssign()
 	}
 }
 
@@ -501,30 +501,36 @@ var reservedTypeNames = map[string]bool{
 	"ERROR": true, "RETURN_VALUE": true, "BREAK": true, "CONTINUE": true,
 }
 
-// parseExpressionOrFieldAssign parses an expression statement, or a field
-// assignment like `p.x = 1` when a member chain on a name is followed by `=`
-func (p *Parser) parseExpressionOrFieldAssign() ast.Statement {
+// parseExpressionOrPathAssign parses an expression statement, or a path
+// assignment like `p.x = 1` or `m[k] = v` when a chain of members and
+// indexes on a name is followed by `=`
+func (p *Parser) parseExpressionOrPathAssign() ast.Statement {
 	stmt := p.parseExpressionStatement()
-	member, ok := stmt.Expression.(*ast.MemberExpression)
-	if !ok || !p.peekTokenIs(token.Assign) {
+	if !p.peekTokenIs(token.Assign) {
 		return stmt
 	}
-	var fields []*ast.Identifier
-	var root ast.Expression = member
+	var path []ast.PathStep
+	root := stmt.Expression
 	for {
-		m, ok := root.(*ast.MemberExpression)
-		if !ok {
+		if m, ok := root.(*ast.MemberExpression); ok {
+			path = append([]ast.PathStep{{Field: m.Property}}, path...)
+			root = m.Object
+		} else if ix, ok := root.(*ast.IndexExpression); ok {
+			path = append([]ast.PathStep{{Index: ix.Index}}, path...)
+			root = ix.Left
+		} else {
 			break
 		}
-		fields = append([]*ast.Identifier{m.Property}, fields...)
-		root = m.Object
+	}
+	if len(path) == 0 {
+		return stmt
 	}
 	name, ok := root.(*ast.Identifier)
 	if !ok {
-		p.errors = append(p.errors, p.atCur("can only assign to fields of a named value"))
+		p.errors = append(p.errors, p.atCur("can only assign to fields and elements of a named value"))
 		return nil
 	}
-	assign := &ast.AssignStatement{Token: p.peekToken, Name: name, Fields: fields}
+	assign := &ast.AssignStatement{Token: p.peekToken, Name: name, Path: path}
 	p.nextToken()
 	p.nextToken()
 	assign.Value = p.parseExpression(lowest)

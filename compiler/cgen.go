@@ -437,16 +437,21 @@ func (f *fgen) stmt(s ast.Statement) string {
 		return v
 	case *ast.AssignStatement:
 		v := f.expr(s.Value)
-		if len(s.Fields) > 0 {
-			// read the current value, build the changed copy, assign that
-			cur := f.readRef(f.mod.Assigns[s], s.Name)
-			names := make([]string, len(s.Fields))
-			for i, field := range s.Fields {
-				names[i] = cString(field.Value)
+		if len(s.Path) > 0 {
+			// the indexes run after the value, left to right. then read the
+			// current value, build the changed copy and assign that
+			steps := make([]string, len(s.Path))
+			for i, step := range s.Path {
+				if step.Field != nil {
+					steps[i] = fmt.Sprintf("{%s, {0}}", cString(step.Field.Value))
+				} else {
+					steps[i] = fmt.Sprintf("{NULL, %s}", f.expr(step.Index))
+				}
 			}
+			cur := f.readRef(f.mod.Assigns[s], s.Name)
 			t := f.temp()
 			f.loc(s)
-			f.line("UValue %s = u_with_fields(%s, %d, (const char *[]){%s}, %s);", t, cur, len(names), strings.Join(names, ", "), v)
+			f.line("UValue %s = u_with_path(%s, %d, (UStep[]){%s}, %s);", t, cur, len(steps), strings.Join(steps, ", "), v)
 			v = t
 		}
 		f.assign(s, v)

@@ -1,11 +1,9 @@
-import "json" as json
-import "maps" as maps
 let mut counts = {}
 let mut i = 0
 while i < 200000 {
-    let w = "w" + json.stringify(i % 1000)
-    let c = maps.get(counts, w, 0)
-    counts = maps.set(counts, w, c + 1)
+    let w = "w" + string(i % 1000)
+    let c = counts[w]
+    counts[w] = if c == nil { 1 } else { c + 1 }
     i = i + 1
 }
 println(len(counts), counts["w7"])

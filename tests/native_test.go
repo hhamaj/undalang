@@ -488,6 +488,62 @@ println(n, type(float(1)), len(string(12345)), int(string(77)) == 77)
 	"err_try_int_type": "fn f(v) { try_int(v) }\nf(nil)",
 	"err_int_range":    "fn f(v) { int(v) }\nf(1e19)",
 	"err_string_arity": "fn f(g) { g(1, 2) }\nf(string)",
+	"path_assign": `struct P { x: int, tags: array }
+let mut m = {"a": 1}
+let snapshot = m
+m["b"] = 2
+m["a"] = m["a"] + 10
+m[3] = "int key"
+m[true] = nil
+println(m, snapshot)
+let mut xs = [1, 2, 3]
+let old = xs
+xs[0] = 9
+xs[-1 + 3] = "x"
+println(xs, old)
+let mut grid = [[0, 0], [0, 0]]
+let row = grid[1]
+grid[1][0] = 5
+println(grid, row)
+let mut cfg = {"servers": [P(1, []), P(2, ["a"])]}
+cfg.servers[1].x = 80
+cfg["servers"][0].tags = ["t"]
+cfg.extra = {}
+cfg.extra[1] = "nested"
+println(cfg)
+let mut counts = {}
+for w in ["a", "b", "a"] {
+    let c = counts[w]
+    counts[w] = if c == nil { 1 } else { c + 1 }
+}
+println(counts)
+fn idx(i) { println("index", i)
+i }
+fn val() { println("value")
+7 }
+let mut order = [[0, 0]]
+order[idx(0)][idx(1)] = val()
+println(order)
+let mut typed: array[int] = [1, 2]
+typed[1] = 20
+let mut tm: map[string, array[int]] = {"k": [1]}
+tm["k"][0] = 2
+println(typed, tm)
+fn bump(t) { let mut c = t
+c[0] = c[0] + 1
+c }
+let base = [1]
+println(bump(base), base)
+`,
+	"err_index_range":    "let mut xs = [1, 2]\nxs[1] = 5\nprintln(xs)\nxs[2] = 3",
+	"err_index_negative": "let mut xs = [1]\nfn at(i) { xs[i] = 0 }\nat(-1)",
+	"err_index_type":     "let mut xs = [1]\nfn at(i) { xs[i] = 0 }\nat(\"0\")",
+	"err_index_key":      "let mut m = {}\nfn at(k) { m[k] = 0 }\nat([1])",
+	"err_index_nil":      "let mut m = {}\nm.a[0] = 1",
+	"err_index_string":   "let mut s = \"abc\"\nfn at(v) { s = v\ns[0] = \"x\" }\nat(\"x\")",
+	"err_index_typed":    "let mut xs: array[int] = [1]\nfn set(v) { xs[0] = v }\nset(2)\nprintln(xs)\nset(\"s\")",
+	"err_index_field":    "struct P { x: int }\nlet mut ps = [P(1)]\nfn set(v) { ps[0].x = v }\nset(\"s\")",
+	"err_index_inner":    "let mut xs = [1]\nfn at(k) { xs[[][k]] = 1 }\nat(\"x\")",
 }
 
 func TestNativeMatchesInterpreter(t *testing.T) {

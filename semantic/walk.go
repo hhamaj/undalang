@@ -38,6 +38,11 @@ func walk(n ast.Node, visit func(ast.Node) bool) bool {
 		addExpr(n.Value)
 	case *ast.AssignStatement:
 		addExpr(n.Value)
+		for _, step := range n.Path {
+			if step.Index != nil {
+				addExpr(step.Index)
+			}
+		}
 	case *ast.ReturnStatement:
 		addExpr(n.ReturnValue)
 	case *ast.ExpressionStatement:

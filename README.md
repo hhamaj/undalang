@@ -157,7 +157,7 @@ Wall-clock time in milliseconds, best of several runs, including process start. 
 What the numbers say:
 - **Loops over integers run close to C** (primes: 26 ms against 21.5). The generated C does integer arithmetic inline.
 - **Function calls cost about 8x C.** Every value is a tagged 16-byte struct, and each call sets up a frame, records its source location and counts depth for the recursion limit. Still about 8x faster than Python.
-- **Map updates are slow.** Maps are values, so `maps.set` copies the map: a loop that updates a 1000-key map is 17x slower than Python. This is the biggest performance gap today.
+- **Map updates are slow.** Maps are values, so `m[k] = v` copies the map: a loop that updates a 1000-key map is 17x slower than Python. This is the biggest performance gap today.
 - **The interpreter is slower than CPython** on calls and loops. It is meant for the REPL and quick runs; `unda build` is the fast path.
 
 Compiling typed functions to plain C types, cheaper calls and maps that don't copy on every update are the next steps, see the [roadmap](./ROADMAP.md).
@@ -267,6 +267,17 @@ match data["count"] {
     3 -> data["name"],
     _ -> "other",
 }
+```
+
+On a `let mut` binding, `m[k] = v` and `xs[i] = v` set an element, and paths mix fields and indexes: `cfg.servers[0].port = 80`, `grid[y][x] = 1`. Like everything else these are values, so the binding gets an updated copy and anything else holding the old value keeps it. Writing past the end of an array is an error (reading past it gives `nil`); a missing map key is added. The value is evaluated first, then the indexes from left to right.
+
+```unda
+let mut counts = {}
+for word in ["a", "b", "a"] {
+    let c = counts[word]
+    counts[word] = if c == nil { 1 } else { c + 1 }
+}
+println(counts)    // {a: 2, b: 1}
 ```
 
 `match` arms take patterns. A bare name binds the value, `[first, ..rest]` destructures arrays, `{"key": value}` destructures maps (extra keys are allowed), and `if` adds a guard. Literals compare by value; to compare against a variable, use a guard such as `x if x == limit`.
@@ -424,7 +435,7 @@ fn dist2(a: Point, b: Point) -> number {
 }
 ```
 
-Struct names start with an uppercase letter and work as types (`p: Point`). Structs are values: `r.x = 5` on a `let mut` binding gives `r` a copy with that field changed, and anything else holding the old value keeps it. The same works for string keys of maps (`cfg.db.port = 5432`). Two struct values are equal when they come from the same declaration and their fields are equal.
+Struct names start with an uppercase letter and work as types (`p: Point`). Structs are values: `r.x = 5` on a `let mut` binding gives `r` a copy with that field changed, and anything else holding the old value keeps it. The same works for string keys of maps (`cfg.db.port = 5432`) and for indexes (`ps[0].x = 5`). Two struct values are equal when they come from the same declaration and their fields are equal.
 
 </details>
 
