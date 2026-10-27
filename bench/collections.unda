@@ -1,0 +1,4 @@
+import "arrays" as arrays
+let xs = arrays.range(0, 1000000)
+let picked = arrays.filter(arrays.map(xs, fn(x) { x * 2 }), fn(x) { x % 3 == 0 })
+println(arrays.reduce(picked, 0, fn(acc, x) { acc + x }))

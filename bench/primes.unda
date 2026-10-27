@@ -1,0 +1,16 @@
+let mut count = 0
+let mut n = 2
+while n < 300000 {
+    let mut d = 2
+    let mut prime = true
+    while d * d <= n {
+        if n % d == 0 {
+            prime = false
+            break
+        }
+        d = d + 1
+    }
+    if prime { count = count + 1 }
+    n = n + 1
+}
+println(count)

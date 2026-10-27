@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="260" viewBox="0 0 960 260" role="img" aria-label="Unda: readable like Python, compiles to C, calls C directly">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#1e1b4b"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="0.5" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#d946ef"/>
+    </linearGradient>
+    <clipPath id="card"><rect width="960" height="260" rx="20"/></clipPath>
+    <style>
+      text { font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .title { font-size: 92px; font-weight: 800; letter-spacing: -2px; }
+      .sub { font-size: 21px; fill: #cbd5e1; }
+      .chip { font-size: 15px; fill: #c7d2fe; }
+      .wave { animation: drift 9s ease-in-out infinite alternate; }
+      .wave2 { animation: drift 12s ease-in-out infinite alternate-reverse; }
+      @keyframes drift { from { transform: translateX(0); } to { transform: translateX(-60px); } }
+      @media (prefers-reduced-motion: reduce) { .wave, .wave2 { animation: none; } }
+    </style>
+  </defs>
+  <g clip-path="url(#card)">
+    <rect width="960" height="260" fill="url(#bg)"/>
+    <path class="wave2" fill="#1e293b" d="M0 205 C 120 175 240 235 360 205 S 600 175 720 205 S 960 235 1080 205 L 1080 260 L 0 260 Z"/>
+    <path class="wave" fill="#312e81" d="M0 225 C 120 200 240 250 360 225 S 600 200 720 225 S 960 250 1080 225 L 1080 260 L 0 260 Z"/>
+  </g>
+  <text x="60" y="122" class="title" fill="url(#word)">unda</text>
+  <text x="64" y="162" class="sub">readable like Python · compiles to C · calls C directly</text>
+  <g transform="translate(720 44)">
+    <rect width="200" height="34" rx="17" fill="none" stroke="#6366f1" stroke-opacity="0.6"/>
+    <text x="100" y="22" text-anchor="middle" class="chip">interp · native</text>
+  </g>
+  <g transform="translate(720 88)">
+    <rect width="200" height="34" rx="17" fill="none" stroke="#d946ef" stroke-opacity="0.6"/>
+    <text x="100" y="22" text-anchor="middle" class="chip">extern "c" { … }</text>
+  </g>
+</svg>
