@@ -83,7 +83,6 @@ Generated C is an internal backend target, not the user-facing language.
 Planned future backends:
 - LLVM IR backend
 - direct native code backend
-- bytecode VM backend (for scripting/embedding)
 
 ---
 
@@ -225,15 +224,14 @@ Success criteria:
 Goal: make compilation architecture backend-agnostic.
 
 Status:
-- backend layer: the `backend` package puts interp, vm and native behind one interface, `unda run --backend=...` picks one, and the differential tests compare all three
-- bytecode VM (`vm` package): compiles the analyzed program, with the checker's frames and slots, to a stack machine. operators, builtins and type checks are the interpreter's Go code, so behavior matches by construction. int fast paths, plain stores for proven assignments and reused frames for calls nothing captures make it 2.4-3.4x faster than the tree walker (fib(30) 205 ms against 692, Python 3.14 takes 99)
+- backend layer: the `backend` package puts interp and native behind one interface, `unda run --backend=...` picks one, and the differential tests compare them
+- bytecode VM, removed: a `vm` package compiled the analyzed program, with the checker's frames and slots, to a stack machine. operators, builtins and type checks are the interpreter's Go code, so behavior matches by construction. int fast paths, plain stores for proven assignments and reused frames for calls nothing captures make it 2.4-3.4x faster than the tree walker (fib(30) 205 ms against 692, Python 3.14 takes 99). it was dropped again: every language feature had to be written three times, and it sat between the interpreter (instant start, the REPL, the reference the tests compare against) and native (much faster, the only one with C calls) without being needed by either. native is the performance backend now
 - not started: the LLVM and direct native backends. neither clang nor llc is installed here, and the C backend already produces native code through cc
 
 Deliverables:
 - backend abstraction layer in compiler architecture
 - optional LLVM backend
 - optional direct native code backend
-- optional bytecode VM backend for embedding and fast script startup
 
 Success criteria:
 - front-end and semantic phases are shared cleanly across backends

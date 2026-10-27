@@ -2,15 +2,12 @@ package tests
 
 import (
 	"io"
-	"os"
-	"path/filepath"
 	"testing"
 
-	"undalang/backend"
 	"undalang/runner"
 )
 
-// interpreter and VM benchmarks, run with go test ./tests -bench . -run '^$'
+// interpreter benchmarks, run with go test ./tests -bench . -run '^$'
 var benchPrograms = map[string]string{
 	"fib": `fn fib(n) { if n < 2 { return n }
 return fib(n - 1) + fib(n - 2) }
@@ -39,23 +36,6 @@ func BenchmarkInterpreter(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				if code := runner.RunSource(src, io.Discard, io.Discard); code != 0 {
-					b.Fatalf("exit %d", code)
-				}
-			}
-		})
-	}
-}
-
-func BenchmarkVM(b *testing.B) {
-	vm, _ := backend.Get("vm")
-	for name, src := range benchPrograms {
-		b.Run(name, func(b *testing.B) {
-			path := filepath.Join(b.TempDir(), name+".unda")
-			if err := os.WriteFile(path, []byte(src), 0644); err != nil {
-				b.Fatal(err)
-			}
-			for i := 0; i < b.N; i++ {
-				if code := vm.Run(path, nil, io.Discard, io.Discard); code != 0 {
 					b.Fatalf("exit %d", code)
 				}
 			}

@@ -37,7 +37,7 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  unda repl")
-	fmt.Fprintln(os.Stderr, "  unda run [--backend=interp|vm|native] path/to/file.unda   (--vm and --native are short for those)")
+	fmt.Fprintln(os.Stderr, "  unda run [--backend=interp|native] path/to/file.unda   (--native is short for the last one)")
 	fmt.Fprintln(os.Stderr, "  unda check [--native] path/to/file.unda")
 	fmt.Fprintln(os.Stderr, "  unda build path/to/file.unda [-o output] [--emit-c file.c]")
 }
@@ -101,7 +101,7 @@ func singleFile(cmd string, args []string, valueFlags, boolFlags []string) (map[
 }
 
 func runCmd(args []string) int {
-	flags, file, ok := singleFile("run", args, []string{"backend"}, []string{"native", "vm"})
+	flags, file, ok := singleFile("run", args, []string{"backend"}, []string{"native"})
 	if !ok {
 		return 1
 	}
@@ -109,8 +109,6 @@ func runCmd(args []string) int {
 	switch {
 	case flags["native"] != "":
 		name = "native"
-	case flags["vm"] != "":
-		name = "vm"
 	case name == "":
 		name = "interp"
 	}

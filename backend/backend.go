@@ -14,10 +14,8 @@ import (
 
 	"undalang/compiler"
 	"undalang/diag"
-	"undalang/object"
 	"undalang/runner"
 	"undalang/semantic"
-	"undalang/vm"
 )
 
 // Backend runs a program file and returns its exit code. diagnostics and
@@ -35,7 +33,6 @@ func register(b Backend) { backends[b.Name()] = b }
 
 func init() {
 	register(interp{})
-	register(bytecode{})
 	register(native{})
 }
 
@@ -68,33 +65,6 @@ func (interp) Name() string     { return "interp" }
 func (interp) Describe() string { return "tree-walking interpreter, runs without checking first" }
 func (interp) Run(path string, _ io.Reader, stdout, stderr io.Writer) int {
 	return runner.RunFile(path, stdout, stderr)
-}
-
-type bytecode struct{}
-
-func (bytecode) Name() string { return "vm" }
-func (bytecode) Describe() string {
-	return "bytecode VM, checks the program, then runs it fast without a C compiler"
-}
-func (bytecode) Run(path string, _ io.Reader, stdout, stderr io.Writer) int {
-	prog := semantic.AnalyzeFile(path, semantic.Options{})
-	if prog.HasErrors() {
-		PrintDiagnostics(stderr, prog)
-		return 1
-	}
-	code, err := vm.Compile(prog)
-	if err != nil {
-		fmt.Fprintf(stderr, "error: %v\n", err)
-		return 1
-	}
-	switch res := vm.New(code, stdout).Run().(type) {
-	case *object.ExitSignal:
-		return res.Code
-	case *object.Error:
-		fmt.Fprintln(stderr, res.Inspect())
-		return 1
-	}
-	return 0
 }
 
 type native struct{}

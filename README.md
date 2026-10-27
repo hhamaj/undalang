@@ -9,7 +9,6 @@ The project roadmap and language design notes are in [ROADMAP.md](./ROADMAP.md).
 ```sh
 go run ./cmd/unda repl
 go run ./cmd/unda run examples/phase1_data_pipeline.unda          # interpreter
-go run ./cmd/unda run --vm examples/phase1_data_pipeline.unda     # bytecode VM
 go run ./cmd/unda check examples/phase1_data_pipeline.unda        # static checks only
 go run ./cmd/unda build examples/phase1_data_pipeline.unda -o app # native executable
 go run ./cmd/unda run --native examples/phase1_data_pipeline.unda # build + run
@@ -19,13 +18,12 @@ go run ./cmd/unda run --native examples/phase1_data_pipeline.unda # build + run
 
 ## Backends
 
-Every program goes through the same front end (parser and checker), then one of three backends runs it. Pick one with `unda run --backend=interp|vm|native` (`--vm` and `--native` are short for the last two):
+Every program goes through the same front end (parser and checker), then one of two backends runs it. Pick one with `unda run --backend=interp|native` (`--native` is short for the second):
 
 - `interp` walks the syntax tree. It starts instantly and runs code the checker would reject, which suits the REPL and quick experiments.
-- `vm` compiles to bytecode for a stack machine and runs it in process. The program has to pass `unda check` first. It reuses the interpreter's operators and builtins and the checker's slot layout, so it behaves exactly like the interpreter, 2-3x faster, without a C compiler.
-- `native` compiles to C and runs the executable, much faster again, and it's the only one that can call C (`extern`).
+- `native` compiles to C and runs the executable, much faster, and it's the only one that can call C (`extern`).
 
-All three give the same output, the same errors at the same places and the same exit codes; the test suite runs every program through each of them and compares.
+Both give the same output, the same errors at the same places and the same exit codes; the test suite runs every program through both and compares.
 
 ## Checking and Diagnostics
 
