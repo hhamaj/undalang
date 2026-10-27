@@ -146,16 +146,16 @@ Wall-clock time in milliseconds, best of several runs, including process start. 
 
 | benchmark | C (`-O2`) | **Unda native** | Python 3.14 | Unda interp |
 |---|---:|---:|---:|---:|
-| `fib(32)`, recursive calls | 3.2 | **28** | 230 | 2104 |
-| primes below 300000, nested loops | 21.3 | **27** | 1658 | 2956 |
-| map, filter and reduce over 1M ints | 11.9 | **60** | 187 | 471 |
-| 200000 updates to a 1000-key map | — | **87** | 100 | 245 |
-| `hello` (startup) | 0.5 | **0.8** | 14.2 | 1.7 |
+| `fib(32)`, recursive calls | 3.1 | **28** | 235 | 2144 |
+| primes below 300000, nested loops | 21.5 | **28** | 1659 | 3060 |
+| map, filter and reduce over 1M ints | 12.7 | **59** | 186 | 465 |
+| 200000 updates to a 1000-key map | — | **86** | 104 | 250 |
+| `hello` (startup) | 0.5 | **0.8** | 15.0 | 1.9 |
 
-<sub>AMD Ryzen 5 5600, Linux, gcc 16.2, Go 1.26. Native times exclude compilation: `unda build` takes about 0.5 s, most of it compiling the C runtime. Peak memory for the map/filter/reduce run: C 20 MB, Unda native 47 MB, Python 65 MB, Unda interp 115 MB. The programs are in [`bench/`](./bench).</sub>
+<sub>AMD Ryzen 5 5600, Linux, gcc 16.2, Go 1.26. Native times exclude compilation: `unda build` takes about 0.6 s, most of it compiling the C runtime. Peak memory for the map/filter/reduce run: C 20 MB, Unda native 55 MB, Python 65 MB, Unda interp 116 MB. The programs are in [`bench/`](./bench).</sub>
 
 What the numbers say:
-- **Loops over integers run close to C** (primes: 27 ms against 21.3). The generated C does integer arithmetic inline.
+- **Loops over integers run close to C** (primes: 28 ms against 21.5). The generated C does integer arithmetic inline.
 - **Function calls cost about 8x C.** Every value is a tagged 16-byte struct, and each call sets up a frame, records its source location and counts depth for the recursion limit. Still about 8x faster than Python.
 - **Updating a map or array in a loop is as fast as in Python**, even though they are values. An update changes the value in place when nothing else holds it and copies it otherwise, so no other holder ever sees the change. `arrays.append` still copies, so growing an array one element at a time is quadratic.
 - **The interpreter is slower than CPython** on calls and loops. It is meant for the REPL and quick runs; `unda build` is the fast path.
