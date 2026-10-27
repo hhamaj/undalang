@@ -245,6 +245,12 @@ var GlobalBuiltins = map[string]*Signature{
 	"try_read_file":   sig("try_read_file", 1, 1, KResult, KString),
 	"try_write_file":  sig("try_write_file", 2, 2, KResult, KString, KString),
 	"try_append_file": sig("try_append_file", 2, 2, KResult, KString, KString),
+
+	"int":       sig("int", 1, 1, KInt, KInt|KFloat|KString),
+	"try_int":   sig("try_int", 1, 1, KResult, KInt|KFloat|KString),
+	"float":     sig("float", 1, 1, KFloat, KInt|KFloat|KString),
+	"try_float": sig("try_float", 1, 1, KResult, KInt|KFloat|KString),
+	"string":    sig("string", 1, 1, KString, KUnknown),
 }
 
 // StdModules mirrors builtins.StdModules

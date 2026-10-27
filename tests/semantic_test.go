@@ -40,6 +40,9 @@ func TestSemanticReportsErrors(t *testing.T) {
 		{"not a function", "let x = 5\nx()", []string{"2:1 not a function: INTEGER"}},
 		{"user arity", "fn add(a, b) { a + b }\nadd(1)", []string{"2:1 wrong number of arguments: expected 2, got 1"}},
 		{"builtin arity", "len(1, 2)", []string{"1:1 len expects 1 argument, got 2"}},
+		{"int arg type", "int(true)", []string{"1:1 int argument 1 must be INTEGER|FLOAT|STRING, got BOOLEAN"}},
+		{"float result type", `let s = float("1") + "x"`, []string{"1:20 type mismatch: FLOAT + STRING"}},
+		{"string arity", "string()", []string{"1:1 string expects 1 argument, got 0"}},
 		{"builtin arg type", `import "strings" as s
 s.upper(5)`, []string{"2:3 strings.upper argument 1 must be STRING, got INTEGER"}},
 		{"pipeline arity", `import "strings" as s

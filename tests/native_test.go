@@ -469,6 +469,25 @@ println(flag(0), flag(10), bits.or(flag(1), flag(3)))
 	"err_typed_implicit": "fn f(v) -> string {\n    let x = v\n    x\n}\nf(1)",
 	"err_typed_no_else":  "fn f(v) -> int {\n    if v { 1 }\n}\nprintln(f(true))\nf(false)",
 	"err_typed_pipeline": "fn up(s: string) { s }\nfn run(v) { v |> up }\nrun(1)",
+	"conversions": `println(int("36"), int(" -7\n"), int("+5"), int(3.9), int(-3.9), int(5), int(-9223372036854775808.0))
+println(float("3.5"), float(2), float("1e3"), float(".5"), float("-2."), float("1E-2"), float("1e-400"), float(1.5))
+println(string(42), string(3.5), string([1, "a"]), string({"k": nil}), string("x"), string(true), string(nil), string(ok(1)))
+for s in ["x", "", " ", "1.5", "1e3", "0x10", "1_000", "--1", "+", "9223372036854775807", "9223372036854775808", "-9223372036854775808"] {
+    println(s, try_int(s))
+}
+for s in ["inf", "nan", ".", "e5", "1e", "1e+", "1.2.3", "1e999", "-1e999", "  2.5  ", "1e+2"] {
+    println(s, try_float(s))
+}
+println(try_int(1e300), try_int(-1e300), try_int(9223372036854775808.0), try_int(0.0 / 1.0))
+let n: int = int("4") + 1
+println(n, type(float(1)), len(string(12345)), int(string(77)) == 77)
+`,
+	"err_int_text":     "fn f(s) { int(s) }\nprintln(f(\"12\"))\nf(\"twelve\")",
+	"err_int_type":     "fn f(v) { int(v) }\nf(true)",
+	"err_float_type":   "fn f(v) { float(v) }\nf([1])",
+	"err_try_int_type": "fn f(v) { try_int(v) }\nf(nil)",
+	"err_int_range":    "fn f(v) { int(v) }\nf(1e19)",
+	"err_string_arity": "fn f(g) { g(1, 2) }\nf(string)",
 }
 
 func TestNativeMatchesInterpreter(t *testing.T) {

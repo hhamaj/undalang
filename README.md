@@ -28,7 +28,6 @@ Unda is a general-purpose language that reads like a script and grows into a sys
 
 ```unda
 import "strings" as strings
-import "json" as json
 
 struct User {
     name: string
@@ -36,8 +35,8 @@ struct User {
 }
 
 fn parse_age(s: string) -> result {
-    match json.try_parse(s) {
-        ok(n) if type(n) == "integer" && n >= 0 -> ok(n),
+    match try_int(s) {
+        ok(n) if n >= 0 -> ok(n),
         _ -> err("not an age: " + strings.trim(s)),
     }
 }
@@ -103,7 +102,7 @@ go build -o unda ./cmd/unda
 | **Memory management** | Garbage collected. The interpreter uses Go's GC; native executables carry a conservative mark-and-sweep collector that scans the stack and registered roots. Manual memory exists only as `mem` buffers, for handing memory to C. |
 | **Memory safety** | Safe for Unda code: no pointers, checked indexing, checked buffers, no use after free. The only unsafe surface is C interop (`extern`). [Details](#memory-safety). |
 | **Values** | Bindings are immutable unless declared `let mut`. Arrays, maps and structs are values: assigning or updating gives a new value, other holders keep the old one. `mem` buffers are the one shared, mutable value. |
-| **Numbers** | `int` is a 64-bit two's complement integer that wraps on overflow (`9223372036854775807 + 1` is the minimum int), `float` is a 64-bit IEEE double. `7 / 2` is `3`, `7.0 / 2` is `3.5`. |
+| **Numbers** | `int` is a 64-bit two's complement integer that wraps on overflow (`9223372036854775807 + 1` is the minimum int), `float` is a 64-bit IEEE double. `7 / 2` is `3`, `7.0 / 2` is `3.5`. `int`, `float` and `string` convert between them and from text. |
 | **Strings** | Immutable, UTF-8, indexed and measured by character: `len("çay")` is 3. |
 | **Errors** | Expected failures are values: `ok(v)` / `err(e)`, unwrapped with `match` or `?`. Bugs (type mismatches, bad arguments) stop the program with `file:line:col`, exit code 1, identically in both backends. |
 | **C interop** | `extern` blocks declare C functions with C types (`i8`…`u64`, `f32`, `f64`, `bool`, `cstring`, `ptr`) and C-layout structs passed by value. Arguments are range-checked when converted. Native backend only. |
@@ -541,6 +540,9 @@ Global builtins:
 - `ok(value)`, `err(reason)`
 - `read_file(path)`, `write_file(path, content)`, `append_file(path, content)`
 - `try_read_file`, `try_write_file`, `try_append_file`: same arguments, return a result
+- `int(v)`, `float(v)`: convert an int, float or string (`int("36")`, `int(3.9)` is 3, `float("2.5")`); a string that isn't a number stops the program
+- `try_int(v)`, `try_float(v)`: same, but return `ok(n)` or `err(message)`
+- `string(v)`: the text `println` would print for `v`
 
 Standard modules:
 

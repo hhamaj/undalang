@@ -34,6 +34,11 @@ func New(out io.Writer) map[string]*object.Builtin {
 		"try_write_file":  attempt("try_write_file", writeFile),
 		"append_file":     plain("append_file", appendFile),
 		"try_append_file": attempt("try_append_file", appendFile),
+		"int":             plain("int", toInt),
+		"try_int":         attempt("try_int", toInt),
+		"float":           plain("float", toFloat),
+		"try_float":       attempt("try_float", toFloat),
+		"string":          builtin(toString),
 	}
 	return b
 }

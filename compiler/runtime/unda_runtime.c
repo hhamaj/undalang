@@ -1292,6 +1292,109 @@ U_BUILTIN_FN(ub_append_file) { (void)env_; return u_write_common("append_file", 
 U_BUILTIN_FN(ub_try_write_file) { (void)env_; U_ATTEMPT(u_write_common("try_write_file", argc, argv, "wb")); }
 U_BUILTIN_FN(ub_try_append_file) { (void)env_; U_ATTEMPT(u_write_common("try_append_file", argc, argv, "ab")); }
 
+/*
+ * int, float and string. builtins/convert.go is the interpreter's copy: the
+ * same text is accepted (checked by hand, strtoll and strtod take more) and
+ * the same messages come out
+ */
+
+static bool uc_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r'; }
+
+/* trims ASCII whitespace into a NUL-terminated copy the caller frees */
+static char *uc_trimmed(UStr *s) {
+    size_t lo = 0, hi = s->len;
+    while (lo < hi && uc_space(s->data[lo])) lo++;
+    while (hi > lo && uc_space(s->data[hi - 1])) hi--;
+    char *out = u_xalloc(hi - lo + 1);
+    memcpy(out, s->data + lo, hi - lo);
+    out[hi - lo] = 0;
+    return out;
+}
+
+static size_t uc_digits(const char *s, size_t *i, size_t n) {
+    size_t start = *i;
+    while (*i < n && s[*i] >= '0' && s[*i] <= '9') (*i)++;
+    return *i - start;
+}
+
+static bool uc_int_text(const char *s, size_t n) {
+    size_t i = 0;
+    if (i < n && (s[i] == '+' || s[i] == '-')) i++;
+    return uc_digits(s, &i, n) > 0 && i == n;
+}
+
+static bool uc_float_text(const char *s, size_t n) {
+    size_t i = 0;
+    if (i < n && (s[i] == '+' || s[i] == '-')) i++;
+    size_t d = uc_digits(s, &i, n);
+    if (i < n && s[i] == '.') { i++; d += uc_digits(s, &i, n); }
+    if (d == 0) return false;
+    if (i < n && (s[i] == 'e' || s[i] == 'E')) {
+        i++;
+        if (i < n && (s[i] == '+' || s[i] == '-')) i++;
+        if (uc_digits(s, &i, n) == 0) return false;
+    }
+    return i == n;
+}
+
+static UValue uc_int(const char *name, int argc, UValue *argv) {
+    U_ARGC(name, 1);
+    UValue v = argv[0];
+    switch (v.tag) {
+    case U_INT: return v;
+    case U_FLOAT:
+        /* 2^63 is the first float past the int range, -2^63 still fits */
+        if (isnan(v.as.f) || v.as.f >= 9223372036854775808.0 || v.as.f < -9223372036854775808.0)
+            u_failf("%s: float is out of range", name);
+        return uv_int((int64_t)v.as.f);
+    case U_STR: {
+        char *t = uc_trimmed(v.as.s);
+        if (!uc_int_text(t, strlen(t))) { free(t); u_failf("%s: not an integer: \"%s\"", name, v.as.s->data); }
+        errno = 0;
+        long long n = strtoll(t, NULL, 10);
+        int err = errno;
+        free(t);
+        if (err == ERANGE) u_failf("%s: out of range: \"%s\"", name, v.as.s->data);
+        return uv_int((int64_t)n);
+    }
+    default: u_panic("%s argument must be INTEGER, FLOAT or STRING, got %s", name, u_type_name(v));
+    }
+}
+
+static UValue uc_float(const char *name, int argc, UValue *argv) {
+    U_ARGC(name, 1);
+    UValue v = argv[0];
+    switch (v.tag) {
+    case U_INT: return uv_float((double)v.as.i);
+    case U_FLOAT: return v;
+    case U_STR: {
+        char *t = uc_trimmed(v.as.s);
+        if (!uc_float_text(t, strlen(t))) { free(t); u_failf("%s: not a number: \"%s\"", name, v.as.s->data); }
+        double f = strtod(t, NULL);
+        free(t);
+        /* only overflow counts, strtod also flags underflow which Go rounds quietly */
+        if (isinf(f)) u_failf("%s: out of range: \"%s\"", name, v.as.s->data);
+        return uv_float(f);
+    }
+    default: u_panic("%s argument must be INTEGER, FLOAT or STRING, got %s", name, u_type_name(v));
+    }
+}
+
+U_BUILTIN_FN(ub_int) { (void)env_; return uc_int("int", argc, argv); }
+U_BUILTIN_FN(ub_try_int) { (void)env_; U_ATTEMPT(uc_int("try_int", argc, argv)); }
+U_BUILTIN_FN(ub_float) { (void)env_; return uc_float("float", argc, argv); }
+U_BUILTIN_FN(ub_try_float) { (void)env_; U_ATTEMPT(uc_float("try_float", argc, argv)); }
+
+/* the text println would print */
+U_BUILTIN_FN(ub_string) {
+    (void)env_;
+    U_ARGC("string", 1);
+    if (argv[0].tag == U_STR) return argv[0];
+    USb sb = {0};
+    u_inspect_to(&sb, argv[0]);
+    return uv_sb_value(&sb);
+}
+
 /* strings */
 
 static bool u_has_prefix(UStr *s, UStr *p) { return p->len <= s->len && memcmp(s->data, p->data, p->len) == 0; }
@@ -2630,6 +2733,8 @@ static UValue u_global_builtin(const char *name) {
         {"write_file", ub_write_file, "write_file"}, {"append_file", ub_append_file, "append_file"},
         {"try_read_file", ub_try_read_file, "try_read_file"}, {"try_write_file", ub_try_write_file, "try_write_file"},
         {"try_append_file", ub_try_append_file, "try_append_file"},
+        {"int", ub_int, "int"}, {"try_int", ub_try_int, "try_int"}, {"float", ub_float, "float"},
+        {"try_float", ub_try_float, "try_float"}, {"string", ub_string, "string"},
         {NULL, NULL, NULL}};
     for (int i = 0; defs[i].name; i++)
         if (!strcmp(defs[i].name, name)) return u_builtin(defs[i].code, defs[i].qualified);
