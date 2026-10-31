@@ -145,7 +145,9 @@ func TestEvalStringsAreCharacterBased(t *testing.T) {
 	evaluated, _ = testEval(t, `"ğüş"[1]`)
 	testExpectedObject(t, evaluated, "ü")
 	evaluated, _ = testEval(t, `"ab"[2]`)
-	testExpectedObject(t, evaluated, nil)
+	if evaluated.Type() != object.ErrorObj {
+		t.Fatalf("expected an out of range error, got=%s", evaluated.Type())
+	}
 }
 
 func testEval(t *testing.T, input string) (object.Object, *bytes.Buffer) {

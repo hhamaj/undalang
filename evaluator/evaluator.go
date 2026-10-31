@@ -305,7 +305,7 @@ func place(node ast.Expression, env *object.Environment, ctx *Context) object.Ob
 		if isAbrupt(index) {
 			return index
 		}
-		return evalIndexExpression(left, index)
+		return builtins.Index(left, index)
 	case *ast.MemberExpression:
 		obj := evalPlace(node.Object, env, ctx)
 		if isAbrupt(obj) {
@@ -801,44 +801,6 @@ func evalMapLiteral(node *ast.MapLiteral, env *object.Environment, ctx *Context)
 		pairs[hashKey.HashKey()] = object.MapPair{Key: key, Value: value}
 	}
 	return &object.Map{Pairs: pairs}
-}
-
-func evalIndexExpression(left, index object.Object) object.Object {
-	switch {
-	case left.Type() == object.ArrayObj && index.Type() == object.IntegerObj:
-		array := left.(*object.Array)
-		idx := index.(*object.Integer).Value
-		if idx < 0 || idx >= int64(len(array.Elements)) {
-			return nilObj
-		}
-		return array.Elements[int(idx)]
-	case left.Type() == object.MapObj:
-		key, ok := index.(object.Hashable)
-		if !ok {
-			return newError("unusable as map key: %s", index.Type())
-		}
-		pair, ok := left.(*object.Map).Pairs[key.HashKey()]
-		if !ok {
-			return nilObj
-		}
-		return pair.Value
-	case left.Type() == object.StringObj && index.Type() == object.IntegerObj:
-		// strings index by character (code point) not byte
-		idx := index.(*object.Integer).Value
-		if idx < 0 {
-			return nilObj
-		}
-		i := int64(0)
-		for _, r := range left.(*object.String).Value {
-			if i == idx {
-				return &object.String{Value: string(r)}
-			}
-			i++
-		}
-		return nilObj
-	default:
-		return newError("index operator not supported: %s[%s]", left.Type(), index.Type())
-	}
 }
 
 // evalMemberExpression handles module members and `m.key`, which reads the

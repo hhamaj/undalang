@@ -87,7 +87,8 @@ println(nil && 1, 1 && nil, "s" || false)
 import "maps" as maps
 let m = {"b": 2, "a": [1, 2.5, "x"], 3: true, false: nil}
 println(m)
-println(m["a"][1], m[3], m["missing"], [1, 2][5], "hello"[1], "hi"[9])
+println(m["a"][1], m[3], m["missing"], try_get([1, 2], 5), "hello"[1], try_get("hi", 9))
+println(try_get(m, 3), try_get(m, "missing"), try_get([nil], 0), try_get("héj", 1))
 println(maps.keys(m), maps.values({"z": 1, "y": 2}))
 println(maps.get(m, "b"), maps.get(m, "q", "default"), maps.has(m, 3))
 println(maps.set({"k": 1}, "k", 2), maps.merge({"a": 1, "b": 1}, {"b": 2}))
@@ -97,7 +98,7 @@ println([1, [2, 3]] == [1, [2, 3]], {"a": [1]} == {"a": [1]}, {"a": 1} == {"a": 
 let nums = arrays.range(1, 6)
 println(nums, arrays.range(3, 0), arrays.reverse(nums), arrays.slice(nums, 1, 3))
 println(arrays.map(nums, fn(n) { n * n }), arrays.filter(nums, fn(n) { n % 2 == 0 }))
-println(arrays.reduce(nums, 0, fn(acc, n) { acc + n }), arrays.first([]), arrays.last(nums))
+println(arrays.reduce(nums, 0, fn(acc, n) { acc + n }), try_get([], 0), arrays.first(nums), arrays.last(nums))
 println(arrays.append(nums, 6), arrays.join(["a", "b"], "+"))
 `,
 	"strings": `import "strings" as strings
@@ -251,7 +252,7 @@ println(sum([1, 2, 3, 4]))
 `,
 	"err_pattern_key": "fn k(key) { match {} { {key: v} -> v } }\nk([1])",
 	"err_guard":       "match [1] { n if n > 0 -> n }",
-	"unicode_strings": "let s = \"çay ☕ 🍵\"\nprintln(len(s), s[0], s[4], s[6], s[7], s[-1], len(\"\"))\nprintln(len(\"ab\"), \"日本語\"[2])\n",
+	"unicode_strings": "let s = \"çay ☕ 🍵\"\nprintln(len(s), s[0], s[4], s[6], try_get(s, 7), try_get(s, -1), len(\"\"))\nprintln(len(\"ab\"), \"日本語\"[2])\n",
 	"err_type_mismatch": `fn f(v) { return v + "a" }
 println("start")
 f(1)`,
@@ -261,6 +262,12 @@ f(1)`,
 	"err_mod_float":      "fn d(a, b) { a % b }\nd(1.5, 2)",
 	"err_depth":          "fn loop(n) { return loop(n + 1) }\nloop(0)",
 	"err_index":          "fn i(a, b) { a[b] }\ni([1], \"x\")",
+	"err_read_past_end":  "fn i(a, b) { a[b] }\nprintln(i([1, 2], 1))\ni([1, 2], 2)",
+	"err_read_negative":  "fn i(a, b) { a[b] }\ni([1, 2], -1)",
+	"err_read_string":    "fn i(a, b) { a[b] }\nprintln(i(\"çay\", 2))\ni(\"çay\", 3)",
+	"err_first_empty":    "import \"arrays\" as arrays\nfn f(a) { arrays.first(a) }\nf([])",
+	"err_last_empty":     "import \"arrays\" as arrays\nfn l(a) { arrays.last(a) }\nl([])",
+	"err_try_get_arg":    "fn g(v) { try_get(v, 0) }\ng(5)",
 	"err_map_key":        "fn k(v) { {v: 1} }\nk([1])",
 	"err_member":         "fn m(v) { v.name }\nm(5)",
 	"map_members":        "let user = {\"name\": \"ada\", \"tags\": {\"lang\": \"unda\"}}\nprintln(user.name, user.tags.lang, user.missing)\nfor u in [user] { println(u.name) }\n",

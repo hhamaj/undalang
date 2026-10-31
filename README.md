@@ -126,7 +126,7 @@ Code written in Unda can't corrupt memory. This is what each kind of memory bug 
 | Bug class | In Unda |
 |---|---|
 | Dangling pointers, use after free | Unda has no pointers to its own values, and values are copied, not aliased. Memory is reclaimed by the GC only when nothing can reach it. |
-| Out-of-bounds index | `xs[10]` on a short array gives `nil`; nothing outside the array is read. |
+| Out-of-bounds index | `xs[10]` on a short array stops the program: `index 10 out of range for an array of length 3`. Nothing outside the array is read. `try_get(xs, 10)` returns an `err` instead. |
 | Buffer overflow | Every `mem.get_*` / `mem.set_*` is bounds checked: `offset 20 is out of range for a 16 byte buffer`. Values must fit the type (`set_i8` of 300 is an error). |
 | Use of a freed buffer, double free | `mem.free` marks the buffer; any later use, including passing it to C, is a runtime error. |
 | Integer overflow | Defined: wraps around, the same in both backends. Never undefined behavior. |
@@ -258,6 +258,8 @@ Comments start with `//` and run to the end of the line.
 
 Unda supports arrays, maps, indexing, `if`, and `match`. Strings are indexed by character: `len("çay")` is 3 and `"çay"[0]` is `"ç"`.
 
+An index past the end of an array or a string, or a negative one, is a bug and stops the program: `index 3 out of range for a string of length 3`. So does `arrays.first` or `arrays.last` on an empty array. A missing map key gives `nil`; `maps.has` and `maps.get(m, k, default)` tell the two apart. When an index might be missing on purpose, `try_get(xs, i)` returns `ok(value)` or `err(message)`, for maps too.
+
 ```unda
 let xs = [1, 2, 3]
 let data = {"name": "unda", "count": len(xs)}
@@ -269,7 +271,7 @@ match data["count"] {
 }
 ```
 
-On a `let mut` binding, `m[k] = v` and `xs[i] = v` set an element, and paths mix fields and indexes: `cfg.servers[0].port = 80`, `grid[y][x] = 1`. Like everything else these are values, so the binding gets an updated copy and anything else holding the old value keeps it. Writing past the end of an array is an error (reading past it gives `nil`); a missing map key is added. The value is evaluated first, then the indexes from left to right.
+On a `let mut` binding, `m[k] = v` and `xs[i] = v` set an element, and paths mix fields and indexes: `cfg.servers[0].port = 80`, `grid[y][x] = 1`. Like everything else these are values, so the binding gets an updated copy and anything else holding the old value keeps it. Writing past the end of an array is an error, like reading past it; a missing map key is added. The value is evaluated first, then the indexes from left to right.
 
 ```unda
 let mut counts = {}
@@ -398,7 +400,7 @@ match parse_addr("localhost", "x") {
 }
 ```
 
-Builtins that can fail because of the outside world (a missing file, broken JSON, a command exiting non-zero) have a `try_` twin that returns `ok(value)` or `err(message)` instead of stopping the program. Passing the wrong kind of argument is still a runtime error, since that's a bug in the program rather than something to handle.
+Builtins that can fail because of the outside world or of data the program doesn't control (a missing file, broken JSON, a command exiting non-zero, text that isn't a number, an index that may be missing) have a `try_` twin that returns `ok(value)` or `err(message)` instead of stopping the program. Passing the wrong kind of argument is still a runtime error, since that's a bug in the program rather than something to handle.
 
 ```unda
 import "json" as json
@@ -554,6 +556,7 @@ Global builtins:
 - `int(v)`, `float(v)`: convert an int, float or string (`int("36")`, `int(3.9)` is 3, `float("2.5")`); a string that isn't a number stops the program
 - `try_int(v)`, `try_float(v)`: same, but return `ok(n)` or `err(message)`
 - `string(v)`: the text `println` would print for `v`
+- `try_get(v, i)`: `v[i]` for an array, string or map, as `ok(value)`, or `err(message)` when the index is out of range or the key is missing
 
 Standard modules:
 

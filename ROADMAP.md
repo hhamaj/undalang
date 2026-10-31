@@ -246,6 +246,7 @@ Status:
 - conversions: `int`, `float`, `string`, with `try_int` and `try_float` returning results. both backends accept the same text, checked by hand rather than left to strconv and strtod
 - index assignment: `m[k] = v`, `xs[i] = v` and mixed paths like `cfg.servers[0].port = 80`, with value semantics. writing past the end of an array is an error
 - in-place updates: an update reuses a container nothing else holds instead of copying it. the copy an update makes is owned, every read that lets a value go somewhere else (bound, passed, stored, iterated, returned by a builtin) clears that, reading an element out doesn't. operands and conditions don't escape since operators never hand an operand on. typed bindings only check the part that changed. the REPL undoes in-place changes when a later check fails. 200000 updates to a 1000-key map: native 5890 → 87 ms, interpreter 28213 → 245 ms (Python 3.14: 100)
+- strict indexing: reading past the end of an array or a string, or `arrays.first`/`last` of an empty one, stops the program instead of giving `nil`, so a wrong index can't travel on as a quiet `nil`. `try_get(v, i)` is the try_ twin, for arrays, strings and maps
 
 Next:
 - `arrays.append` in place, it still copies

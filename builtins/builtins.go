@@ -39,6 +39,7 @@ func New(out io.Writer) map[string]*object.Builtin {
 		"float":           plain("float", toFloat),
 		"try_float":       attempt("try_float", toFloat),
 		"string":          builtin(toString),
+		"try_get":         attempt("try_get", tryGet),
 	}
 	return b
 }
@@ -371,7 +372,7 @@ func arraysFirst(args ...object.Object) object.Object {
 		return errorf("arrays.first expects ARRAY, got %s", args[0].Type())
 	}
 	if len(arr.Elements) == 0 {
-		return &object.Nil{}
+		return errorf("arrays.first of an empty array")
 	}
 	return arr.Elements[0]
 }
@@ -385,7 +386,7 @@ func arraysLast(args ...object.Object) object.Object {
 		return errorf("arrays.last expects ARRAY, got %s", args[0].Type())
 	}
 	if len(arr.Elements) == 0 {
-		return &object.Nil{}
+		return errorf("arrays.last of an empty array")
 	}
 	return arr.Elements[len(arr.Elements)-1]
 }

@@ -802,20 +802,37 @@ static UValue u_neg(UValue v) {
 
 static inline UValue u_not(UValue v) { return uv_bool(!u_truthy(v)); }
 
-static UValue u_index(UValue l, UValue i) {
+static void u_failf(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));
+
+/*
+ * xs[i], s[i] and m[k]. reading past the end of an array or a string is a
+ * bug, a missing map key gives nil. try_get passes its name and gets every
+ * miss, the missing key too, as a failure. builtins/index.go is the
+ * interpreter's copy
+ */
+static UValue u_lookup(const char *name, UValue l, UValue i) {
+    const char *sep = name ? ": " : "";
+    if (!name) name = "";
     if (l.tag == U_ARR && i.tag == U_INT) {
-        if (i.as.i < 0 || (uint64_t)i.as.i >= l.as.a->len) return uv_nil();
+        if (i.as.i < 0 || (uint64_t)i.as.i >= l.as.a->len)
+            u_failf("%s%sindex %lld out of range for an array of length %zu", name, sep, (long long)i.as.i, l.as.a->len);
         return l.as.a->items[i.as.i];
     }
     if (l.tag == U_MAP) {
         if (!u_hashable(i)) u_panic("unusable as map key: %s", u_type_name(i));
         int64_t idx = u_map_find(l.as.m, i);
-        return idx < 0 ? uv_nil() : l.as.m->entries[idx].value;
+        if (idx >= 0) return l.as.m->entries[idx].value;
+        if (*name) {
+            USb sb = {0};
+            u_inspect_to(&sb, i);
+            UValue key = uv_sb_value(&sb);
+            u_failf("%s%skey not found: %s", name, sep, key.as.s->data);
+        }
+        return uv_nil();
     }
     if (l.tag == U_STR && i.tag == U_INT) {
         /* strings index by character (code point) not byte */
         UStr *s = l.as.s;
-        if (i.as.i < 0) return uv_nil();
         int64_t n = 0;
         for (size_t pos = 0; pos < s->len; n++) {
             int size;
@@ -827,10 +844,12 @@ static UValue u_index(UValue l, UValue i) {
             }
             pos += (size_t)size;
         }
-        return uv_nil();
+        u_failf("%s%sindex %lld out of range for a string of length %lld", name, sep, (long long)i.as.i, (long long)n);
     }
     u_panic("index operator not supported: %s[%s]", u_type_name(l), u_type_name(i));
 }
+
+static UValue u_index(UValue l, UValue i) { return u_lookup(NULL, l, i); }
 
 static size_t *u_sorted_entries(UMap *m);
 
@@ -1471,6 +1490,13 @@ static UValue uc_float(const char *name, int argc, UValue *argv) {
 }
 
 U_BUILTIN_FN(ub_int) { (void)env_; return uc_int("int", argc, argv); }
+U_BUILTIN_FN(ub_try_get) {
+    (void)env_;
+    U_ARGC("try_get", 2);
+    if (argv[0].tag != U_ARR && argv[0].tag != U_STR && argv[0].tag != U_MAP)
+        u_panic("try_get expects ARRAY, STRING or MAP, got %s", u_type_name(argv[0]));
+    U_ATTEMPT(u_lookup("try_get", argv[0], argv[1]));
+}
 U_BUILTIN_FN(ub_try_int) { (void)env_; U_ATTEMPT(uc_int("try_int", argc, argv)); }
 U_BUILTIN_FN(ub_float) { (void)env_; return uc_float("float", argc, argv); }
 U_BUILTIN_FN(ub_try_float) { (void)env_; U_ATTEMPT(uc_float("try_float", argc, argv)); }
@@ -1724,14 +1750,16 @@ U_BUILTIN_FN(ua_first) {
     (void)env_;
     U_ARGC("arrays.first", 1);
     UArr *a = u_want_arr(argv[0], "arrays.first expects ARRAY, got %s");
-    return a->len ? a->items[0] : uv_nil();
+    if (!a->len) u_panic("arrays.first of an empty array");
+    return a->items[0];
 }
 
 U_BUILTIN_FN(ua_last) {
     (void)env_;
     U_ARGC("arrays.last", 1);
     UArr *a = u_want_arr(argv[0], "arrays.last expects ARRAY, got %s");
-    return a->len ? a->items[a->len - 1] : uv_nil();
+    if (!a->len) u_panic("arrays.last of an empty array");
+    return a->items[a->len - 1];
 }
 
 U_BUILTIN_FN(ua_join) { (void)env_; return u_strings_join(argc, argv); }
@@ -2825,7 +2853,7 @@ static UValue u_global_builtin(const char *name) {
         {"try_append_file", ub_try_append_file, "try_append_file"},
         {"int", ub_int, "int"}, {"try_int", ub_try_int, "try_int"}, {"float", ub_float, "float"},
         {"try_float", ub_try_float, "try_float"}, {"string", ub_string, "string"},
-        {NULL, NULL, NULL}};
+        {"try_get", ub_try_get, "try_get"}, {NULL, NULL, NULL}};
     for (int i = 0; defs[i].name; i++)
         if (!strcmp(defs[i].name, name)) return u_builtin(defs[i].code, defs[i].qualified);
     u_panic("identifier not found: %s", name);

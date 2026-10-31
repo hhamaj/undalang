@@ -251,6 +251,7 @@ var GlobalBuiltins = map[string]*Signature{
 	"float":     sig("float", 1, 1, KFloat, KInt|KFloat|KString),
 	"try_float": sig("try_float", 1, 1, KResult, KInt|KFloat|KString),
 	"string":    sig("string", 1, 1, KString, KUnknown),
+	"try_get":   sig("try_get", 2, 2, KResult, KArray|KString|KMap, KUnknown),
 }
 
 // StdModules mirrors builtins.StdModules
