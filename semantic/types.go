@@ -234,6 +234,10 @@ func sig(name string, min, max int, returns Kind, params ...Kind) *Signature {
 var GlobalBuiltins = map[string]*Signature{
 	"print":       sig("print", 0, -1, KNil),
 	"println":     sig("println", 0, -1, KNil),
+	"eprint":      sig("eprint", 0, -1, KNil),
+	"eprintln":    sig("eprintln", 0, -1, KNil),
+	"read_line":   sig("read_line", 0, 0, KString|KNil),
+	"read_stdin":  sig("read_stdin", 0, 0, KString),
 	"len":         sig("len", 1, 1, KInt, KString|KArray|KMap),
 	"type":        sig("type", 1, 1, KString, KUnknown),
 	"ok":          sig("ok", 1, 1, KResult, KUnknown),

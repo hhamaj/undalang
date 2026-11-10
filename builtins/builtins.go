@@ -19,7 +19,14 @@ import (
 // what process.args() returns
 var ScriptArgs []string
 
+// New gives the global builtins writing to out, with no stdin and stderr
+// going to the same place
 func New(out io.Writer) map[string]*object.Builtin {
+	return NewWithIO(NewIO(nil, out, out))
+}
+
+func NewWithIO(s *IO) map[string]*object.Builtin {
+	out := s.Out
 	b := map[string]*object.Builtin{
 		"print":   builtin(func(args ...object.Object) object.Object { fmt.Fprint(out, joinArgs(args)); return &object.Nil{} }),
 		"println": builtin(func(args ...object.Object) object.Object { fmt.Fprintln(out, joinArgs(args)); return &object.Nil{} }),
@@ -45,6 +52,7 @@ func New(out io.Writer) map[string]*object.Builtin {
 		"string":          builtin(toString),
 		"try_get":         attempt("try_get", tryGet),
 	}
+	s.add(b)
 	return b
 }
 

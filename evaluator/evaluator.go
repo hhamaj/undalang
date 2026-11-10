@@ -53,6 +53,12 @@ type Context struct {
 }
 
 func NewContext(baseDir string, out io.Writer) *Context {
+	return NewContextIO(baseDir, builtins.NewIO(nil, out, out))
+}
+
+// NewContextIO is NewContext with the program's stdin and stderr too
+func NewContextIO(baseDir string, stdio *builtins.IO) *Context {
+	out := stdio.Out
 	if baseDir == "" {
 		if wd, err := os.Getwd(); err == nil {
 			baseDir = wd
@@ -64,7 +70,7 @@ func NewContext(baseDir string, out io.Writer) *Context {
 		loading:  map[string]bool{},
 		modules:  map[string]*object.Module{},
 		structs:  map[*ast.StructStatement]*object.StructDef{},
-		builtins: builtins.New(out),
+		builtins: builtins.NewWithIO(stdio),
 	}
 }
 

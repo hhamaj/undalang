@@ -1316,6 +1316,58 @@ U_BUILTIN_FN(ub_println) {
     return uv_nil();
 }
 
+/* stderr gets stdout flushed first so the two interleave like the interpreter's */
+U_BUILTIN_FN(ub_eprint) {
+    (void)env_;
+    USb sb = {0};
+    u_join_args(&sb, argc, argv);
+    fflush(stdout);
+    if (sb.len) fwrite(sb.buf, 1, sb.len, stderr);
+    free(sb.buf);
+    return uv_nil();
+}
+
+U_BUILTIN_FN(ub_eprintln) {
+    (void)env_;
+    USb sb = {0};
+    u_join_args(&sb, argc, argv);
+    sb_putc(&sb, '\n');
+    fflush(stdout);
+    fwrite(sb.buf, 1, sb.len, stderr);
+    free(sb.buf);
+    return uv_nil();
+}
+
+/* nil at end of input, so an empty line and no line look different */
+U_BUILTIN_FN(ub_read_line) {
+    (void)env_; (void)argv;
+    if (argc != 0) u_panic("read_line expects 0 arguments, got %d", argc);
+    fflush(stdout);
+    char *line = NULL;
+    size_t cap = 0;
+    ssize_t n = getline(&line, &cap, stdin);
+    if (n < 0) { free(line); return uv_nil(); }
+    if (n > 0 && line[n - 1] == '\n') n--;
+    if (n > 0 && line[n - 1] == '\r') n--;
+    UValue v = uv_str_n(line, (size_t)n);
+    free(line);
+    return v;
+}
+
+U_BUILTIN_FN(ub_read_stdin) {
+    (void)env_; (void)argv;
+    if (argc != 0) u_panic("read_stdin expects 0 arguments, got %d", argc);
+    fflush(stdout);
+    USb sb = {0};
+    char chunk[65536];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof chunk, stdin)) > 0)
+        sb_putn(&sb, chunk, n);
+    UValue v = uv_str_n(sb.buf ? sb.buf : "", sb.len);
+    free(sb.buf);
+    return v;
+}
+
 U_BUILTIN_FN(ub_len) {
     (void)env_;
     U_ARGC("len", 1);
@@ -2847,6 +2899,8 @@ static UValue u_std_module(const char *name) {
 static UValue u_global_builtin(const char *name) {
     static const UBuiltinDef defs[] = {
         {"print", ub_print, "print"}, {"println", ub_println, "println"}, {"len", ub_len, "len"},
+        {"eprint", ub_eprint, "eprint"}, {"eprintln", ub_eprintln, "eprintln"},
+        {"read_line", ub_read_line, "read_line"}, {"read_stdin", ub_read_stdin, "read_stdin"},
         {"type", ub_type, "type"}, {"ok", ub_ok, "ok"}, {"err", ub_err, "err"},
         {"read_file", ub_read_file, "read_file"},
         {"write_file", ub_write_file, "write_file"}, {"append_file", ub_append_file, "append_file"},

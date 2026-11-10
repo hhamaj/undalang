@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"undalang/builtins"
 	"undalang/diag"
 	"undalang/evaluator"
 	"undalang/lexer"
@@ -15,6 +16,11 @@ import (
 )
 
 func RunFile(path string, out io.Writer, errOut io.Writer) int {
+	return RunFileIO(path, os.Stdin, out, errOut)
+}
+
+// RunFileIO runs a file with its own stdin
+func RunFileIO(path string, in io.Reader, out io.Writer, errOut io.Writer) int {
 	if !strings.HasSuffix(path, ".unda") {
 		fmt.Fprintf(errOut, "error: expected a .unda file, got %q\n", path)
 		return 1
@@ -26,7 +32,7 @@ func RunFile(path string, out io.Writer, errOut io.Writer) int {
 		return 1
 	}
 
-	return runSource(string(input), filepath.Dir(path), diag.DisplayPath(path), out, errOut)
+	return runSource(string(input), filepath.Dir(path), diag.DisplayPath(path), builtins.NewIO(in, out, errOut))
 }
 
 func RunSource(input string, out io.Writer, errOut io.Writer) int {
@@ -34,10 +40,11 @@ func RunSource(input string, out io.Writer, errOut io.Writer) int {
 }
 
 func RunSourceInDir(input string, baseDir string, out io.Writer, errOut io.Writer) int {
-	return runSource(input, baseDir, "", out, errOut)
+	return runSource(input, baseDir, "", builtins.NewIO(nil, out, errOut))
 }
 
-func runSource(input, baseDir, file string, out io.Writer, errOut io.Writer) int {
+func runSource(input, baseDir, file string, stdio *builtins.IO) int {
+	errOut := stdio.Err
 	l := lexer.New(input)
 	p := parser.New(l)
 	program := p.ParseProgram()
@@ -48,7 +55,7 @@ func runSource(input, baseDir, file string, out io.Writer, errOut io.Writer) int
 	}
 
 	env := object.NewEnvironment()
-	ctx := evaluator.NewContext(baseDir, out)
+	ctx := evaluator.NewContextIO(baseDir, stdio)
 	ctx.File = file
 	result := evaluator.EvalWithContext(program, env, ctx)
 	if exit, ok := result.(*object.ExitSignal); ok {

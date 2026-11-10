@@ -554,7 +554,9 @@ stats.sum([1, 2, 3])
 
 Global builtins:
 
-- `print(...)`, `println(...)`
+- `print(...)`, `println(...)`, and `eprint(...)`, `eprintln(...)` for stderr
+- `read_line()`: the next line of stdin without its line ending, `nil` at the end of input
+- `read_stdin()`: the rest of stdin as one string
 - `len(value)` for strings (characters), arrays, and maps
 - `type(value)`
 - `ok(value)`, `err(reason)`

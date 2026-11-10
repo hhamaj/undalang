@@ -402,6 +402,13 @@ println(any_v, exact(p), exact(Point(0, 0)))
 println(size(500), size(50), size(5), size(0))
 for x in [1, 2, 3] { if x == 1 { continue } else if x == 2 { continue } else { println("three") } }
 `,
+	"stderr_order": `println("one")
+eprintln("two", [3])
+print("four ")
+eprint("five\n")
+println("six")
+println(read_line(), len(read_stdin()))
+`,
 	"element_types": `struct P { x: int }
 let xs: array[int] = [1, 2, 3]
 let m: map[string, array[int]] = {"a": xs, "b": []}

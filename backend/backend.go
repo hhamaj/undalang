@@ -65,9 +65,9 @@ type interp struct{}
 
 func (interp) Name() string     { return "interp" }
 func (interp) Describe() string { return "tree-walking interpreter, runs without checking first" }
-func (interp) Run(path string, args []string, _ io.Reader, stdout, stderr io.Writer) int {
+func (interp) Run(path string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	builtins.ScriptArgs = args
-	return runner.RunFile(path, stdout, stderr)
+	return runner.RunFileIO(path, stdin, stdout, stderr)
 }
 
 type native struct{}
