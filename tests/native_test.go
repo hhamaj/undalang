@@ -443,6 +443,52 @@ m["k"][0] = 2
 println("${m["k"][0]} ${m}")
 `,
 	"err_template": "fn f(n) { \"value ${n + 1}\" }\nprintln(f(1))\nf(\"x\")",
+	"append_in_place": `import "arrays" as arrays
+let mut xs = [1]
+let ys = xs
+xs = arrays.append(xs, 2)
+xs = arrays.append(xs, 3)
+println(xs, ys)
+let mut zs = []
+for i in [1, 2, 3] { zs = arrays.append(zs, i) }
+let snap = zs
+zs = arrays.append(zs, 4)
+let get = fn() { zs }
+zs = arrays.append(zs, 5)
+println(snap, zs, get())
+let mut s = [1]
+s = arrays.append(s, s)
+s = arrays.append(s, s)
+println(s)
+let lib = {"append": fn(a, b) { "custom " + string(b) }}
+let mut q = [1]
+q = lib.append(q, 2)
+println(q)
+fn build(n) {
+    let mut out = []
+    for i in arrays.range(0, n) { out = arrays.append(out, i * i) }
+    out
+}
+let b1 = build(4)
+let mut b2 = build(4)
+b2 = arrays.append(b2, 99)
+println(b1, b2)
+let mut ints: array[int] = []
+ints = arrays.append(ints, 1)
+ints = arrays.append(ints, 2)
+println(ints)
+let mut grid = [[0]]
+let mut row = grid[0]
+row = arrays.append(row, 1)
+println(grid, row)
+let mut big = []
+let mut i = 0
+while i < 100000 { big = arrays.append(big, i)
+i = i + 1 }
+println(len(big), arrays.sum(big))
+`,
+	"err_append_typed":     "import \"arrays\" as arrays\nlet mut ints: array[int] = [1]\nints = arrays.append(ints, 2)\nints = arrays.append(ints, \"x\")",
+	"err_append_not_array": "import \"arrays\" as arrays\nlet mut n = 5\nn = arrays.append(n, 1)",
 	"match_blocks": `fn describe(v) {
     match v {
         0 -> {},

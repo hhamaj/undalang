@@ -15,6 +15,10 @@ import (
 	"undalang/object"
 )
 
+// AppendBuiltin is arrays.append. there's only one, so the evaluator can
+// tell `xs = arrays.append(xs, v)` apart from a call to some other append
+var AppendBuiltin = builtin(arraysAppend)
+
 // ScriptArgs are the arguments given to the program after its file name,
 // what process.args() returns
 var ScriptArgs []string
@@ -89,7 +93,7 @@ func StdModules(apply Applier) map[string]*object.Module {
 			"pad_right":  builtin(stringsPad("strings.pad_right", false)),
 		}},
 		"arrays": {Name: "arrays", Members: map[string]object.Object{
-			"append":   builtin(arraysAppend),
+			"append":   AppendBuiltin,
 			"filter":   builtin(arraysFilter(apply)),
 			"first":    builtin(arraysFirst),
 			"join":     builtin(arraysJoin),

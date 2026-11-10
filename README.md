@@ -157,7 +157,7 @@ Wall-clock time in milliseconds, best of several runs, including process start. 
 What the numbers say:
 - **Loops over integers run close to C** (primes: 28 ms against 21.5). The generated C does integer arithmetic inline.
 - **Function calls cost about 8x C.** Every value is a tagged 16-byte struct, and each call sets up a frame, records its source location and counts depth for the recursion limit. Still about 8x faster than Python.
-- **Updating a map or array in a loop is as fast as in Python**, even though they are values. An update changes the value in place when nothing else holds it and copies it otherwise, so no other holder ever sees the change. `arrays.append` still copies, so growing an array one element at a time is quadratic.
+- **Updating a map or array in a loop is as fast as in Python**, even though they are values. An update changes the value in place when nothing else holds it and copies it otherwise, so no other holder ever sees the change. The same goes for growing an array with `xs = arrays.append(xs, v)`: a million appends take about 30 ms natively.
 - **The interpreter is slower than CPython** on calls and loops. It is meant for the REPL and quick runs; `unda build` is the fast path.
 
 Compiling typed functions to plain C types and cheaper calls are the next steps, see the [roadmap](./ROADMAP.md).
@@ -288,7 +288,7 @@ match data["count"] {
 }
 ```
 
-On a `let mut` binding, `m[k] = v` and `xs[i] = v` set an element, and paths mix fields and indexes: `cfg.servers[0].port = 80`, `grid[y][x] = 1`. Like everything else these are values, so the binding gets an updated copy and anything else holding the old value keeps it. Writing past the end of an array is an error, like reading past it; a missing map key is added. The value is evaluated first, then the indexes from left to right.
+On a `let mut` binding, `m[k] = v` and `xs[i] = v` set an element, and paths mix fields and indexes: `cfg.servers[0].port = 80`, `grid[y][x] = 1`. Like everything else these are values, so the binding gets an updated copy and anything else holding the old value keeps it. Writing past the end of an array is an error, like reading past it; a missing map key is added. The value is evaluated first, then the indexes from left to right. Growing an array works the same way: `xs = arrays.append(xs, v)` appends in place when nothing else holds `xs`, and `v` is evaluated before `xs` is read.
 
 ```unda
 let mut counts = {}

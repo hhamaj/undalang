@@ -318,6 +318,8 @@ type pathAssign struct {
 	steps string
 	n     int
 	leaf  string
+	// cond, when set, has to hold for the path check to count
+	cond string
 }
 
 func (f *fgen) line(format string, args ...interface{}) {
@@ -446,6 +448,9 @@ func (f *fgen) stmt(s ast.Statement) string {
 		f.line("S[%d] = %s;", sym.Slot, v)
 		return v
 	case *ast.AssignStatement:
+		if call, ok := ast.AppendAssign(s); ok {
+			return f.appendAssign(s, call)
+		}
 		v := f.expr(s.Value)
 		if len(s.Path) > 0 {
 			// the indexes run after the value, left to right. then read the
@@ -567,6 +572,23 @@ func (f *fgen) loopBody(loop ast.Statement, body *ast.BlockStatement, bind func(
 	}
 }
 
+// appendAssign is `xs = arrays.append(xs, v)`, see u_append_assign. only
+// when it really appended does the new element alone need a type check
+func (f *fgen) appendAssign(s *ast.AssignStatement, call *ast.CallExpression) string {
+	fn := f.expr(call.Function)
+	v := f.expr(call.Arguments[1])
+	cur := f.place(call.Arguments[0])
+	fast, t, st := f.temp(), f.temp(), f.temp()
+	f.line("bool %s;", fast)
+	f.loc(call)
+	f.line("UValue %s = u_append_assign(%s, %s, %s, &%s);", t, fn, cur, v, fast)
+	f.line("UStep %s[] = {{NULL, %s ? uv_int((int64_t)%s.as.a->len - 1) : uv_nil()}};", st, fast, t)
+	f.path = &pathAssign{steps: st, n: 1, leaf: v, cond: fast}
+	f.assign(s, t)
+	f.path = nil
+	return t
+}
+
 func (f *fgen) assign(s *ast.AssignStatement, v string) {
 	ref := f.mod.Assigns[s]
 	opened := 0
@@ -604,7 +626,11 @@ func (f *fgen) assignChecked(s *ast.AssignStatement, sym *semantic.Symbol, lv, v
 		f.loc(s)
 		if p := f.path; p != nil {
 			// the rest already fit, look at the part that changed first
-			f.line("if (!u_path_fits(&%s, %d, %s, %s))", f.g.typeDesc(sym.Annot), p.n, p.steps, p.leaf)
+			cond := ""
+			if p.cond != "" {
+				cond = p.cond + " && "
+			}
+			f.line("if (!(%su_path_fits(&%s, %d, %s, %s)))", cond, f.g.typeDesc(sym.Annot), p.n, p.steps, p.leaf)
 			f.indent++
 			f.checkType(v, sym.Annot, sym.Name+" expects")
 			f.indent--

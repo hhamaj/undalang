@@ -331,6 +331,25 @@ func (sl *StringLiteral) expressionNode()      {}
 func (sl *StringLiteral) TokenLiteral() string { return sl.Token.Literal }
 func (sl *StringLiteral) String() string       { return `"` + sl.Value + `"` }
 
+// AppendAssign matches `xs = m.append(xs, v)`, the way an array grows. both
+// backends turn it into an in-place append when m is the arrays module and
+// nothing else holds xs. the call is returned when the shape fits
+func AppendAssign(s *AssignStatement) (*CallExpression, bool) {
+	if len(s.Path) != 0 {
+		return nil, false
+	}
+	call, ok := s.Value.(*CallExpression)
+	if !ok || call.ArgNames != nil || len(call.Arguments) != 2 {
+		return nil, false
+	}
+	member, ok := call.Function.(*MemberExpression)
+	if !ok || member.Property.Value != "append" {
+		return nil, false
+	}
+	target, ok := call.Arguments[0].(*Identifier)
+	return call, ok && target.Value == s.Name.Value
+}
+
 // TemplateLiteral is "text ${expr} text". Parts are the pieces in order,
 // text as StringLiterals, each turned into text like string() does
 type TemplateLiteral struct {

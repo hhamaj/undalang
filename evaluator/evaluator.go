@@ -118,6 +118,9 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		env.DefineTyped(node.Name.Value, val, node.Mutable, node.Type)
 		return val
 	case *ast.AssignStatement:
+		if call, ok := ast.AppendAssign(node); ok {
+			return evalAppendAssign(node, call, env, ctx)
+		}
 		val := EvalWithContext(node.Value, env, ctx)
 		if isAbrupt(val) {
 			return val
@@ -453,6 +456,56 @@ func (u *undoLog) revert() {
 	for i := len(*u) - 1; i >= 0; i-- {
 		(*u)[i]()
 	}
+}
+
+// evalAppendAssign runs `xs = arrays.append(xs, v)`. v goes first, then xs
+// is read without escaping. an array nothing else holds (Owned) grows in
+// place, so a loop that builds an array is linear instead of quadratic. any
+// other array is copied once and the copy is Owned. compiler/cgen.go does
+// the same with u_append_assign
+func evalAppendAssign(node *ast.AssignStatement, call *ast.CallExpression, env *object.Environment, ctx *Context) object.Object {
+	fn := EvalWithContext(call.Function, env, ctx)
+	if isAbrupt(fn) {
+		return fn
+	}
+	val := EvalWithContext(call.Arguments[1], env, ctx)
+	if isAbrupt(val) {
+		return val
+	}
+	cur := evalPlace(call.Arguments[0], env, ctx)
+	if isAbrupt(cur) {
+		return cur
+	}
+	arr, isArr := cur.(*object.Array)
+	if fn != builtins.AppendBuiltin || !isArr {
+		// someone else's append, or an error to report: a plain call
+		res := applyFunctionWithContext(fn, []object.Object{object.Escape(cur), val}, ctx)
+		if errObj, ok := res.(*object.Error); ok && errObj.Line == 0 {
+			errObj.File = ctx.File
+			errObj.Line, errObj.Column = ast.Position(call)
+		}
+		if isAbrupt(res) {
+			return res
+		}
+		return env.Assign(node.Name.Value, res)
+	}
+	n := len(arr.Elements)
+	grown := arr
+	if arr.Owned {
+		arr.Elements = append(arr.Elements, val)
+	} else {
+		items := make([]object.Object, n, n*2+1)
+		copy(items, escapeAll(arr.Elements))
+		grown = &object.Array{Elements: append(items, val), Owned: true}
+	}
+	step := []ast.PathStep{{Index: call.Arguments[1]}}
+	res := env.AssignWith(node.Name.Value, grown, func(t *ast.TypeAnnotation) bool {
+		return pathFits(t, step, []object.Object{object.NewInt(int64(n))}, val)
+	})
+	if isError(res) && grown == arr {
+		arr.Elements = arr.Elements[:n]
+	}
+	return res
 }
 
 // pathFits reports whether a binding typed t still fits after the value at

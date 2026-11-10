@@ -1820,6 +1820,31 @@ U_BUILTIN_FN(ua_append) {
     return uv_arrv(a);
 }
 
+/*
+ * xs = arrays.append(xs, v). an array nothing else holds grows in place, any
+ * other is copied once and the copy is owned, so building an array in a loop
+ * is linear. *fast says it appended, then only the new element needs a type
+ * check. anything but the real arrays.append is a plain call.
+ * evalAppendAssign is the interpreter's copy
+ */
+static UValue u_append_assign(UValue fn, UValue cur, UValue v, bool *fast) {
+    *fast = false;
+    if (fn.tag != U_BUILTIN || fn.as.fn->code != ua_append || cur.tag != U_ARR) {
+        u_escape(cur);
+        UValue args[2] = {cur, v};
+        return u_call(fn, 2, args);
+    }
+    UArr *a = cur.as.a;
+    if (!a->owned) {
+        a = u_arr_copy(a, a->len + 1);
+        a->owned = true;
+        for (size_t i = 0; i < a->len; i++) u_escape(a->items[i]);
+    }
+    u_arr_push(a, v);
+    *fast = true;
+    return uv_arrv(a);
+}
+
 U_BUILTIN_FN(ua_first) {
     (void)env_;
     U_ARGC("arrays.first", 1);
