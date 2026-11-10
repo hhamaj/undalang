@@ -1,0 +1,51 @@
+// top words of a text, a small but real CLI tool
+//
+//   unda run examples/wordfreq.unda README.md 5
+//   cat notes.txt | unda run examples/wordfreq.unda - 10
+import "arrays" as arrays
+import "maps" as maps
+import "os" as os
+import "process" as process
+import "strings" as strings
+
+fn usage() {
+    eprintln("usage: wordfreq <file|-> [count]")
+    os.exit(2)
+}
+
+fn min(a, b) { if a < b { a } else { b } }
+
+fn read_input(path: string) -> result {
+    if path == "-" { ok(read_stdin()) } else { try_read_file(path) }
+}
+
+fn words(text: string) -> array {
+    let mut out = []
+    for line in strings.lines(strings.lower(text)) {
+        for w in strings.split(line, " ") {
+            let w = strings.trim(w)
+            if len(w) > 2 { out = arrays.append(out, w) }
+        }
+    }
+    out
+}
+
+let args = process.args()
+if len(args) == 0 { usage() }
+let top = if len(args) > 1 { try_int(args[1]) } else { ok(10) }
+
+match [read_input(args[0]), top] {
+    [ok(text), ok(n)] -> {
+        let mut counts = {}
+        for w in words(text) { counts[w] = maps.get(counts, w, 0) + 1 }
+        let ranked = arrays.sort_by(maps.entries(counts), fn(e) { [-e[1], e[0]] })
+        let shown = arrays.slice(ranked, 0, min(n, len(ranked)))
+        let width = arrays.reduce(shown, 0, fn(w, e) { if len(e[0]) > w { len(e[0]) } else { w } })
+        for i, e in shown {
+            println("${strings.pad_left(string(i + 1), 2)}. ${strings.pad_right(e[0], width)}  ${e[1]}")
+        }
+        eprintln("${len(counts)} distinct words")
+    },
+    [err(e), _] -> { eprintln("error: ${e}"); os.exit(1) },
+    [_, err(e)] -> { eprintln("error: count: ${e}"); os.exit(1) },
+}

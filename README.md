@@ -184,6 +184,7 @@ go run ./cmd/unda run examples/phase1_data_pipeline.unda          # interpreter
 go run ./cmd/unda check examples/phase1_data_pipeline.unda        # static checks only
 go run ./cmd/unda build examples/phase1_data_pipeline.unda -o app # native executable
 go run ./cmd/unda run --native examples/phase1_data_pipeline.unda # build + run
+go run ./cmd/unda run examples/wordfreq.unda README.md 5          # arguments after the file go to the program
 ```
 
 Flags go before the file; everything after it is the program's own, `process.args()` returns them (without the program name) in both backends.
@@ -604,6 +605,7 @@ Standard modules:
 - `examples/phase4_structs.unda`: structs
 - `examples/phase4_ffi.unda`: calling C functions (native only)
 - `examples/phase4_system.unda`: `bits` and `os`
+- `examples/wordfreq.unda`: a complete CLI tool, top words of a file or stdin
 
 ## License
 
