@@ -2896,6 +2896,61 @@ U_BUILTIN_FN(ua_sort_by) {
     return u_sort_stable("arrays.sort_by", src, keys);
 }
 
+U_BUILTIN_FN(ua_index_of) {
+    (void)env_;
+    U_ARGC("arrays.index_of", 2);
+    UArr *a = u_want_arr(argv[0], "arrays.index_of first argument must be ARRAY, got %s");
+    for (size_t i = 0; i < a->len; i++)
+        if (u_equal(a->items[i], argv[1])) return uv_int((int64_t)i);
+    return uv_int(-1);
+}
+
+U_BUILTIN_FN(ua_contains) {
+    (void)env_;
+    U_ARGC("arrays.contains", 2);
+    UArr *a = u_want_arr(argv[0], "arrays.contains first argument must be ARRAY, got %s");
+    for (size_t i = 0; i < a->len; i++)
+        if (u_equal(a->items[i], argv[1])) return uv_bool(true);
+    return uv_bool(false);
+}
+
+U_BUILTIN_FN(ua_sum) {
+    (void)env_;
+    U_ARGC("arrays.sum", 1);
+    UArr *a = u_want_arr(argv[0], "arrays.sum expects ARRAY, got %s");
+    uint64_t isum = 0;
+    double fsum = 0;
+    bool is_float = false;
+    for (size_t i = 0; i < a->len; i++) {
+        UValue v = a->items[i];
+        if (v.tag == U_INT) { isum += (uint64_t)v.as.i; fsum += (double)v.as.i; }
+        else if (v.tag == U_FLOAT) { is_float = true; fsum += v.as.f; }
+        else u_panic("arrays.sum element %zu is %s, not a number", i, u_type_name(v));
+    }
+    return is_float ? uv_float(fsum) : uv_int((int64_t)isum);
+}
+
+/* any, all and find: walk until the callback says stop. returns the index or -1 */
+static int64_t u_arrays_test(const char *name, int argc, UValue *argv, bool stop_on) {
+    U_ARGC(name, 2);
+    char what[64];
+    snprintf(what, sizeof what, "%s first argument must be ARRAY, got %%s", name);
+    UArr *a = u_want_arr(argv[0], what);
+    for (size_t i = 0; i < a->len; i++) {
+        UValue arg = a->items[i];
+        if (u_truthy(u_call(argv[1], 1, &arg)) == stop_on) return (int64_t)i;
+    }
+    return -1;
+}
+
+U_BUILTIN_FN(ua_any) { (void)env_; return uv_bool(u_arrays_test("arrays.any", argc, argv, true) >= 0); }
+U_BUILTIN_FN(ua_all) { (void)env_; return uv_bool(u_arrays_test("arrays.all", argc, argv, false) < 0); }
+U_BUILTIN_FN(ua_find) {
+    (void)env_;
+    int64_t i = u_arrays_test("arrays.find", argc, argv, true);
+    return i < 0 ? uv_nil() : argv[0].as.a->items[i];
+}
+
 typedef struct { const char *name; UCode code; const char *qualified; } UBuiltinDef;
 
 static const UBuiltinDef u_strings_defs[] = {
@@ -2909,7 +2964,9 @@ static const UBuiltinDef u_arrays_defs[] = {
     {"join", ua_join, "arrays.join"}, {"last", ua_last, "arrays.last"}, {"map", ua_map, "arrays.map"},
     {"range", ua_range, "arrays.range"}, {"reduce", ua_reduce, "arrays.reduce"}, {"reverse", ua_reverse, "arrays.reverse"},
     {"slice", ua_slice, "arrays.slice"}, {"sort", ua_sort, "arrays.sort"}, {"sort_by", ua_sort_by, "arrays.sort_by"},
-    {NULL, NULL, NULL}};
+    {"index_of", ua_index_of, "arrays.index_of"}, {"contains", ua_contains, "arrays.contains"},
+    {"sum", ua_sum, "arrays.sum"}, {"any", ua_any, "arrays.any"}, {"all", ua_all, "arrays.all"},
+    {"find", ua_find, "arrays.find"}, {NULL, NULL, NULL}};
 static const UBuiltinDef u_maps_defs[] = {
     {"get", um_get, "maps.get"}, {"has", um_has, "maps.has"}, {"keys", um_keys, "maps.keys"},
     {"merge", um_merge, "maps.merge"}, {"set", um_set, "maps.set"}, {"values", um_values, "maps.values"},

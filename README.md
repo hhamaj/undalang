@@ -572,7 +572,7 @@ Global builtins:
 Standard modules:
 
 - `strings`: `split`, `join`, `upper`, `lower`, `trim`, `replace`, `contains`, `has_prefix`, `has_suffix`
-- `arrays`: `append`, `first`, `last`, `map`, `filter`, `reduce`, `range`, `reverse`, `slice`, `join`, `sort`, `sort_by(xs, key_fn)`. Sorting is stable and orders numbers, strings, and arrays of those element by element, so `sort_by(people, fn(p) { [-p.age, p.name] })` sorts by age descending, then name; values that can't be compared stop the program
+- `arrays`: `append`, `first`, `last`, `map`, `filter`, `reduce`, `range`, `reverse`, `slice`, `join`, `sort`, `sort_by(xs, key_fn)`, `contains`, `index_of` (`-1` when missing), `sum`, `any`, `all`, `find` (`nil` when nothing matches). Sorting is stable and orders numbers, strings, and arrays of those element by element, so `sort_by(people, fn(p) { [-p.age, p.name] })` sorts by age descending, then name; values that can't be compared stop the program
 - `maps`: `get`, `has`, `set`, `merge`, `keys`, `values`
 - `json`: `parse`, `try_parse`, `stringify`
 - `math`: `abs`, `ceil`, `floor`, `max`, `min`, `pow`, `round`, `sqrt`

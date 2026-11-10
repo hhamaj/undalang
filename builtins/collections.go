@@ -143,3 +143,98 @@ func arraysSortBy(apply Applier) object.BuiltinFunction {
 		return sortStable("arrays.sort_by", arr.Elements, keys)
 	}
 }
+
+func arraysIndexOf(args ...object.Object) object.Object {
+	arr, e := wantArray("arrays.index_of", args, 2)
+	if e != nil {
+		return e
+	}
+	for i, el := range arr.Elements {
+		if object.Equal(el, args[1]) {
+			return object.NewInt(int64(i))
+		}
+	}
+	return object.NewInt(-1)
+}
+
+func arraysContains(args ...object.Object) object.Object {
+	arr, e := wantArray("arrays.contains", args, 2)
+	if e != nil {
+		return e
+	}
+	for _, el := range arr.Elements {
+		if object.Equal(el, args[1]) {
+			return &object.Boolean{Value: true}
+		}
+	}
+	return &object.Boolean{Value: false}
+}
+
+func arraysSum(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return errorf("arrays.sum expects 1 argument, got %d", len(args))
+	}
+	arr, ok := args[0].(*object.Array)
+	if !ok {
+		return errorf("arrays.sum expects ARRAY, got %s", args[0].Type())
+	}
+	var isum int64
+	var fsum float64
+	float := false
+	for i, el := range arr.Elements {
+		switch v := el.(type) {
+		case *object.Integer:
+			isum += v.Value
+			fsum += float64(v.Value)
+		case *object.Float:
+			float = true
+			fsum += v.Value
+		default:
+			return errorf("arrays.sum element %d is %s, not a number", i, el.Type())
+		}
+	}
+	if float {
+		return &object.Float{Value: fsum}
+	}
+	return object.NewInt(isum)
+}
+
+// arraysTest covers any, all and find, which only differ in when they stop
+func arraysTest(name string, apply Applier, done func(hit bool) bool, result func(el object.Object, stopped bool) object.Object) object.BuiltinFunction {
+	return func(args ...object.Object) object.Object {
+		arr, e := wantArray(name, args, 2)
+		if e != nil {
+			return e
+		}
+		for _, el := range arr.Elements {
+			r := apply(args[1], []object.Object{el})
+			if stops(r) {
+				return r
+			}
+			if done(truthy(r)) {
+				return result(el, true)
+			}
+		}
+		return result(nil, false)
+	}
+}
+
+func arraysAny(apply Applier) object.BuiltinFunction {
+	return arraysTest("arrays.any", apply, func(hit bool) bool { return hit },
+		func(_ object.Object, stopped bool) object.Object { return &object.Boolean{Value: stopped} })
+}
+
+func arraysAll(apply Applier) object.BuiltinFunction {
+	return arraysTest("arrays.all", apply, func(hit bool) bool { return !hit },
+		func(_ object.Object, stopped bool) object.Object { return &object.Boolean{Value: !stopped} })
+}
+
+func arraysFind(apply Applier) object.BuiltinFunction {
+	return arraysTest("arrays.find", apply, func(hit bool) bool { return hit },
+		func(el object.Object, stopped bool) object.Object {
+			if stopped {
+				return el
+			}
+			return &object.Nil{}
+		})
+}
