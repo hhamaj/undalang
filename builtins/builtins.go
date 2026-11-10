@@ -81,6 +81,12 @@ func StdModules(apply Applier) map[string]*object.Module {
 			"split":      builtin(stringsSplit),
 			"trim":       builtin(oneString("strings.trim", strings.TrimSpace)),
 			"upper":      builtin(oneString("strings.upper", strings.ToUpper)),
+			"index_of":   builtin(stringsIndexOf),
+			"chars":      builtin(stringsChars),
+			"lines":      builtin(stringsLines),
+			"repeat":     builtin(stringsRepeat),
+			"pad_left":   builtin(stringsPad("strings.pad_left", true)),
+			"pad_right":  builtin(stringsPad("strings.pad_right", false)),
 		}},
 		"arrays": {Name: "arrays", Members: map[string]object.Object{
 			"append":   builtin(arraysAppend),

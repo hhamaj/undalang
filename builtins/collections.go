@@ -3,6 +3,7 @@ package builtins
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"undalang/object"
 )
@@ -279,4 +280,121 @@ func mapsEntries(args ...object.Object) object.Object {
 		out = append(out, &object.Array{Elements: []object.Object{pair.Key, pair.Value}})
 	}
 	return &object.Array{Elements: out}
+}
+
+func wantStrings(name string, args []object.Object, n int) ([]string, object.Object) {
+	if len(args) != n {
+		return nil, errorf("%s expects %d arguments, got %d", name, n, len(args))
+	}
+	out := make([]string, 0, n)
+	for i, a := range args {
+		s, ok := a.(*object.String)
+		if !ok {
+			return nil, errorf("%s argument %d must be STRING, got %s", name, i+1, a.Type())
+		}
+		out = append(out, s.Value)
+	}
+	return out, nil
+}
+
+// stringsIndexOf counts in characters like indexing does, -1 when missing
+func stringsIndexOf(args ...object.Object) object.Object {
+	s, e := wantStrings("strings.index_of", args, 2)
+	if e != nil {
+		return e
+	}
+	i := strings.Index(s[0], s[1])
+	if i < 0 {
+		return object.NewInt(-1)
+	}
+	return object.NewInt(int64(utf8.RuneCountInString(s[0][:i])))
+}
+
+func stringsChars(args ...object.Object) object.Object {
+	s, e := wantStrings("strings.chars", args, 1)
+	if e != nil {
+		return e
+	}
+	// like strings.split(s, ""), a broken byte is its own character
+	out := []object.Object{}
+	for _, c := range strings.Split(s[0], "") {
+		out = append(out, &object.String{Value: c})
+	}
+	return &object.Array{Elements: out}
+}
+
+// stringsLines splits on \n, drops a \r before it and doesn't give an empty
+// last line for text that ends in a newline
+func stringsLines(args ...object.Object) object.Object {
+	s, e := wantStrings("strings.lines", args, 1)
+	if e != nil {
+		return e
+	}
+	text := strings.TrimSuffix(s[0], "\n")
+	out := []object.Object{}
+	if text == "" && s[0] == "" {
+		return &object.Array{Elements: out}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		out = append(out, &object.String{Value: strings.TrimSuffix(line, "\r")})
+	}
+	return &object.Array{Elements: out}
+}
+
+func stringsRepeat(args ...object.Object) object.Object {
+	if len(args) != 2 {
+		return errorf("strings.repeat expects 2 arguments, got %d", len(args))
+	}
+	s, ok := args[0].(*object.String)
+	if !ok {
+		return errorf("strings.repeat first argument must be STRING, got %s", args[0].Type())
+	}
+	n, ok := args[1].(*object.Integer)
+	if !ok {
+		return errorf("strings.repeat count must be INTEGER, got %s", args[1].Type())
+	}
+	if n.Value < 0 {
+		return errorf("strings.repeat count can't be negative: %d", n.Value)
+	}
+	if len(s.Value) > 0 && n.Value > int64(1<<31)/int64(len(s.Value)) {
+		return errorf("strings.repeat result too long")
+	}
+	return &object.String{Value: strings.Repeat(s.Value, int(n.Value))}
+}
+
+// stringsPad pads to a width in characters with a one character fill
+func stringsPad(name string, left bool) object.BuiltinFunction {
+	return func(args ...object.Object) object.Object {
+		if len(args) != 2 && len(args) != 3 {
+			return errorf("%s expects 2 or 3 arguments, got %d", name, len(args))
+		}
+		s, ok := args[0].(*object.String)
+		if !ok {
+			return errorf("%s first argument must be STRING, got %s", name, args[0].Type())
+		}
+		width, ok := args[1].(*object.Integer)
+		if !ok {
+			return errorf("%s width must be INTEGER, got %s", name, args[1].Type())
+		}
+		fill := " "
+		if len(args) == 3 {
+			f, ok := args[2].(*object.String)
+			if !ok || utf8.RuneCountInString(f.Value) != 1 {
+				return errorf("%s fill must be a one character STRING", name)
+			}
+			fill = f.Value
+		}
+		n := width.Value - int64(utf8.RuneCountInString(s.Value))
+		if n <= 0 {
+			return s
+		}
+		if n > 1<<31 {
+			return errorf("%s result too long", name)
+		}
+		pad := strings.Repeat(fill, int(n))
+		if left {
+			return &object.String{Value: pad + s.Value}
+		}
+		return &object.String{Value: s.Value + pad}
+	}
 }

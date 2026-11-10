@@ -571,7 +571,7 @@ Global builtins:
 
 Standard modules:
 
-- `strings`: `split`, `join`, `upper`, `lower`, `trim`, `replace`, `contains`, `has_prefix`, `has_suffix`
+- `strings`: `split`, `join`, `upper`, `lower`, `trim`, `replace`, `contains`, `has_prefix`, `has_suffix`, `index_of` (in characters, `-1` when missing), `chars`, `lines` (handles `\r\n` and a trailing newline), `repeat`, `pad_left`/`pad_right(s, width, fill = " ")`
 - `arrays`: `append`, `first`, `last`, `map`, `filter`, `reduce`, `range`, `reverse`, `slice`, `join`, `sort`, `sort_by(xs, key_fn)`, `contains`, `index_of` (`-1` when missing), `sum`, `any`, `all`, `find` (`nil` when nothing matches). Sorting is stable and orders numbers, strings, and arrays of those element by element, so `sort_by(people, fn(p) { [-p.age, p.name] })` sorts by age descending, then name; values that can't be compared stop the program
 - `maps`: `get`, `has`, `set`, `merge`, `keys`, `values`, `delete`, `entries` (`[key, value]` pairs in `for` order)
 - `json`: `parse`, `try_parse`, `stringify`

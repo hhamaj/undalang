@@ -2979,6 +2979,93 @@ U_BUILTIN_FN(um_entries) {
     return uv_arrv(a);
 }
 
+static size_t u_char_count(const char *s, size_t n) {
+    size_t count = 0;
+    for (size_t i = 0; i < n; count++) {
+        int size;
+        u_utf8_decode((const unsigned char *)s + i, n - i, &size);
+        i += (size_t)size;
+    }
+    return count;
+}
+
+U_BUILTIN_FN(us_index_of) {
+    (void)env_;
+    U_ARGC("strings.index_of", 2);
+    UStr *s = u_want_str(argv[0], "strings.index_of argument 1");
+    UStr *sub = u_want_str(argv[1], "strings.index_of argument 2");
+    const char *hit = u_find(s->data, s->len, sub->data, sub->len);
+    if (!hit) return uv_int(-1);
+    return uv_int((int64_t)u_char_count(s->data, (size_t)(hit - s->data)));
+}
+
+U_BUILTIN_FN(us_chars) {
+    (void)env_;
+    U_ARGC("strings.chars", 1);
+    UValue args[2] = {uv_strv(u_want_str(argv[0], "strings.chars argument 1")), uv_cstr("")};
+    return us_split(NULL, 2, args);
+}
+
+U_BUILTIN_FN(us_lines) {
+    (void)env_;
+    U_ARGC("strings.lines", 1);
+    UStr *s = u_want_str(argv[0], "strings.lines argument 1");
+    UArr *out = u_arr_new(0);
+    if (s->len == 0) return uv_arrv(out);
+    const char *p = s->data, *end = s->data + s->len;
+    if (end[-1] == '\n') end--;
+    for (;;) {
+        const char *nl = memchr(p, '\n', (size_t)(end - p));
+        const char *stop = nl ? nl : end;
+        size_t n = (size_t)(stop - p);
+        if (n && p[n - 1] == '\r') n--;
+        u_arr_push(out, uv_str_n(p, n));
+        if (!nl) break;
+        p = nl + 1;
+    }
+    return uv_arrv(out);
+}
+
+U_BUILTIN_FN(us_repeat) {
+    (void)env_;
+    U_ARGC("strings.repeat", 2);
+    UStr *s = u_want_str(argv[0], "strings.repeat first argument");
+    if (argv[1].tag != U_INT) u_panic("strings.repeat count must be INTEGER, got %s", u_type_name(argv[1]));
+    int64_t n = argv[1].as.i;
+    if (n < 0) u_panic("strings.repeat count can't be negative: %lld", (long long)n);
+    if (s->len > 0 && n > ((int64_t)1 << 31) / (int64_t)s->len) u_panic("strings.repeat result too long");
+    USb sb = {0};
+    for (int64_t i = 0; i < n; i++) sb_putn(&sb, s->data, s->len);
+    return uv_sb_value(&sb);
+}
+
+static UValue u_pad(const char *name, int argc, UValue *argv, bool left) {
+    if (argc != 2 && argc != 3) u_panic("%s expects 2 or 3 arguments, got %d", name, argc);
+    char what[64];
+    snprintf(what, sizeof what, "%s first argument", name);
+    UStr *s = u_want_str(argv[0], what);
+    if (argv[1].tag != U_INT) u_panic("%s width must be INTEGER, got %s", name, u_type_name(argv[1]));
+    const char *fill = " ";
+    size_t fill_len = 1;
+    if (argc == 3) {
+        if (argv[2].tag != U_STR || u_char_count(argv[2].as.s->data, argv[2].as.s->len) != 1)
+            u_panic("%s fill must be a one character STRING", name);
+        fill = argv[2].as.s->data;
+        fill_len = argv[2].as.s->len;
+    }
+    int64_t n = argv[1].as.i - (int64_t)u_char_count(s->data, s->len);
+    if (n <= 0) return uv_strv(s);
+    if (n > ((int64_t)1 << 31)) u_panic("%s result too long", name);
+    USb sb = {0};
+    if (!left) sb_putn(&sb, s->data, s->len);
+    for (int64_t i = 0; i < n; i++) sb_putn(&sb, fill, fill_len);
+    if (left) sb_putn(&sb, s->data, s->len);
+    return uv_sb_value(&sb);
+}
+
+U_BUILTIN_FN(us_pad_left) { (void)env_; return u_pad("strings.pad_left", argc, argv, true); }
+U_BUILTIN_FN(us_pad_right) { (void)env_; return u_pad("strings.pad_right", argc, argv, false); }
+
 typedef struct { const char *name; UCode code; const char *qualified; } UBuiltinDef;
 
 static const UBuiltinDef u_strings_defs[] = {
@@ -2986,6 +3073,9 @@ static const UBuiltinDef u_strings_defs[] = {
     {"has_suffix", us_has_suffix, "strings.has_suffix"}, {"join", us_join, "strings.join"},
     {"lower", us_lower, "strings.lower"}, {"replace", us_replace, "strings.replace"},
     {"split", us_split, "strings.split"}, {"trim", us_trim, "strings.trim"}, {"upper", us_upper, "strings.upper"},
+    {"index_of", us_index_of, "strings.index_of"}, {"chars", us_chars, "strings.chars"},
+    {"lines", us_lines, "strings.lines"}, {"repeat", us_repeat, "strings.repeat"},
+    {"pad_left", us_pad_left, "strings.pad_left"}, {"pad_right", us_pad_right, "strings.pad_right"},
     {NULL, NULL, NULL}};
 static const UBuiltinDef u_arrays_defs[] = {
     {"append", ua_append, "arrays.append"}, {"filter", ua_filter, "arrays.filter"}, {"first", ua_first, "arrays.first"},

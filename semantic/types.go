@@ -270,6 +270,12 @@ var StdModules = map[string]map[string]*Signature{
 		"split":      sig("strings.split", 2, 2, KArray, KString, KString),
 		"trim":       sig("strings.trim", 1, 1, KString, KString),
 		"upper":      sig("strings.upper", 1, 1, KString, KString),
+		"index_of":   sig("strings.index_of", 2, 2, KInt, KString, KString),
+		"chars":      sig("strings.chars", 1, 1, KArray, KString),
+		"lines":      sig("strings.lines", 1, 1, KArray, KString),
+		"repeat":     sig("strings.repeat", 2, 2, KString, KString, KInt),
+		"pad_left":   sig("strings.pad_left", 2, 3, KString, KString, KInt, KString),
+		"pad_right":  sig("strings.pad_right", 2, 3, KString, KString, KInt, KString),
 	},
 	"arrays": {
 		"append":   sig("arrays.append", 2, 2, KArray, KArray, KUnknown),
