@@ -924,6 +924,11 @@ func (c *checker) expr(e ast.Expression, sc *scope) Type {
 		return kindType(KFloat)
 	case *ast.StringLiteral:
 		return kindType(KString)
+	case *ast.TemplateLiteral:
+		for _, part := range e.Parts {
+			c.expr(part, sc)
+		}
+		return kindType(KString)
 	case *ast.Boolean:
 		return kindType(KBool)
 	case *ast.NilLiteral:

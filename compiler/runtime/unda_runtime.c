@@ -1575,6 +1575,16 @@ U_BUILTIN_FN(ub_string) {
     return uv_sb_value(&sb);
 }
 
+/* "a ${x} b", every part as string() would give it */
+static UValue u_template(int n, UValue *parts) {
+    USb sb = {0};
+    for (int i = 0; i < n; i++) {
+        if (parts[i].tag == U_STR) sb_putn(&sb, parts[i].as.s->data, parts[i].as.s->len);
+        else u_inspect_to(&sb, parts[i]);
+    }
+    return uv_sb_value(&sb);
+}
+
 /* strings */
 
 static bool u_has_prefix(UStr *s, UStr *p) { return p->len <= s->len && memcmp(s->data, p->data, p->len) == 0; }

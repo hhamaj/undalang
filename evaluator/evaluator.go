@@ -195,6 +195,18 @@ func eval(node ast.Node, env *object.Environment, ctx *Context) object.Object {
 		return &object.Float{Value: node.Value}
 	case *ast.StringLiteral:
 		return &object.String{Value: node.Value}
+	case *ast.TemplateLiteral:
+		// the parts only get turned into text, so like operands they don't
+		// escape
+		var b strings.Builder
+		for _, part := range node.Parts {
+			v := evalPlace(part, env, ctx)
+			if isAbrupt(v) {
+				return v
+			}
+			b.WriteString(v.Inspect())
+		}
+		return &object.String{Value: b.String()}
 	case *ast.Boolean:
 		return nativeBool(node.Value)
 	case *ast.NilLiteral:

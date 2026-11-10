@@ -103,7 +103,7 @@ go build -o unda ./cmd/unda
 | **Memory safety** | Safe for Unda code: no pointers, checked indexing, checked buffers, no use after free. The only unsafe surface is C interop (`extern`). [Details](#memory-safety). |
 | **Values** | Bindings are immutable unless declared `let mut`. Arrays, maps and structs are values: assigning or updating gives a new value, other holders keep the old one. Underneath, an update changes the value in place when nothing else holds it. `mem` buffers are the one shared, mutable value. |
 | **Numbers** | `int` is a 64-bit two's complement integer that wraps on overflow (`9223372036854775807 + 1` is the minimum int), `float` is a 64-bit IEEE double. `7 / 2` is `3`, `7.0 / 2` is `3.5`. `int`, `float` and `string` convert between them and from text. |
-| **Strings** | Immutable, UTF-8, indexed and measured by character: `len("çay")` is 3. |
+| **Strings** | Immutable, UTF-8, indexed and measured by character: `len("çay")` is 3. `"hi ${name}"` interpolates any expression, `<` and friends compare in code point order. |
 | **Errors** | Expected failures are values: `ok(v)` / `err(e)`, unwrapped with `match` or `?`. Bugs (type mismatches, bad arguments) stop the program with `file:line:col`, exit code 1, identically in both backends. |
 | **C interop** | `extern` blocks declare C functions with C types (`i8`…`u64`, `f32`, `f64`, `bool`, `cstring`, `ptr`) and C-layout structs passed by value. Arguments are range-checked when converted. Native backend only. |
 | **Concurrency** | None yet. Programs are single-threaded. |
@@ -259,6 +259,14 @@ Comments start with `//` and run to the end of the line.
 
 ```unda
 let size = if n > 100 { "big" } else if n > 10 { "mid" } else { "small" }
+```
+
+`${...}` inside a string evaluates an expression and inserts it as `string()` would print it. `\${` writes a literal `${`. Other escapes: `\n`, `\t`, `\r`, `\0`, `\"`, `\\`, `\x41` (ASCII) and `\u{1F600}`.
+
+```unda
+let user = {"name": "ada", "langs": ["c", "unda"]}
+println("${user.name} knows ${len(user.langs)} languages: ${user.langs}")
+// ada knows 2 languages: [c, unda]
 ```
 
 Strings compare with `<`, `>`, `<=`, `>=` by code point, so `"B" < "a"` and `"z" < "ç"`.

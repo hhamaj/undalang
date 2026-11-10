@@ -76,6 +76,7 @@ func New(l *lexer.Lexer) *Parser {
 	p.registerPrefix(token.Int, p.parseIntegerLiteral)
 	p.registerPrefix(token.Float, p.parseFloatLiteral)
 	p.registerPrefix(token.String, p.parseStringLiteral)
+	p.registerPrefix(token.Template, p.parseTemplateLiteral)
 	p.registerPrefix(token.True, p.parseBoolean)
 	p.registerPrefix(token.False, p.parseBoolean)
 	p.registerPrefix(token.Nil, p.parseNil)
@@ -599,6 +600,68 @@ func (p *Parser) parseFloatLiteral() ast.Expression {
 
 func (p *Parser) parseStringLiteral() ast.Expression {
 	return &ast.StringLiteral{Token: p.curToken, Value: p.curToken.Literal}
+}
+
+// parseTemplateLiteral splits "a ${x} b" into its pieces. each ${...} is
+// parsed by a parser of its own that starts at the right line and column, so
+// errors inside point at the real place
+func (p *Parser) parseTemplateLiteral() ast.Expression {
+	tok := p.curToken
+	raw := tok.Literal
+	lit := &ast.TemplateLiteral{Token: tok}
+	// the position of raw[i], raw starts right after the opening quote
+	line, col := tok.Line, tok.Column+1
+	advance := func(from, to int) {
+		for ; from < to; from++ {
+			if raw[from] == '\n' {
+				line, col = line+1, 1
+			} else {
+				col++
+			}
+		}
+	}
+	text := 0
+	flush := func(end int) {
+		if end > text {
+			lit.Parts = append(lit.Parts, &ast.StringLiteral{Token: tok, Value: lexer.Unescape(raw[text:end])})
+		}
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '\\' {
+			i++
+			continue
+		}
+		if raw[i] != '$' || i+1 >= len(raw) || raw[i+1] != '{' {
+			continue
+		}
+		flush(i)
+		end := lexer.MatchBrace(raw, i+1)
+		if end < 0 {
+			p.errors = append(p.errors, fmt.Sprintf("line %d:%d unclosed ${ in string", line, col))
+			return nil
+		}
+		advance(text, i+2)
+		src := raw[i+2 : end]
+		sub := New(lexer.NewAt(src, line, col))
+		if sub.curTokenIs(token.EOF) {
+			p.errors = append(p.errors, fmt.Sprintf("line %d:%d empty ${} in string", line, col))
+			return nil
+		}
+		expr := sub.parseExpression(lowest)
+		if !sub.peekTokenIs(token.EOF) {
+			sub.nextToken()
+			sub.errors = append(sub.errors, sub.atCur(fmt.Sprintf("unexpected %s inside ${...}", sub.curToken.Literal)))
+		}
+		p.errors = append(p.errors, sub.errors...)
+		if expr == nil {
+			return nil
+		}
+		lit.Parts = append(lit.Parts, expr)
+		advance(i+2, end+1)
+		i, text = end, end+1
+	}
+	flush(len(raw))
+	return lit
 }
 
 func (p *Parser) parseBoolean() ast.Expression {

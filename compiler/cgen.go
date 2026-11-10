@@ -668,6 +668,14 @@ func (f *fgen) expr(e ast.Expression) string {
 		return fmt.Sprintf("uv_float(%s)", strconv.FormatFloat(e.Value, 'g', -1, 64)+cFloatSuffix(e.Value))
 	case *ast.StringLiteral:
 		return fmt.Sprintf("uv_str_n(%s, %d)", cString(e.Value), len(e.Value))
+	case *ast.TemplateLiteral:
+		parts := make([]string, len(e.Parts))
+		for i, part := range e.Parts {
+			parts[i] = f.operand(part)
+		}
+		t := f.temp()
+		f.line("UValue %s = u_template(%d, (UValue[]){%s});", t, len(parts), strings.Join(parts, ", "))
+		return t
 	case *ast.Boolean:
 		if e.Value {
 			return "uv_bool(true)"

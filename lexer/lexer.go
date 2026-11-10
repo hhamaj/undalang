@@ -18,7 +18,13 @@ type Lexer struct {
 }
 
 func New(input string) *Lexer {
-	l := &Lexer{input: input, line: 1}
+	return NewAt(input, 1, 1)
+}
+
+// NewAt lexes input that starts at line:col of a bigger source, for the
+// expressions inside a string template
+func NewAt(input string, line, col int) *Lexer {
+	l := &Lexer{input: input, line: line, column: col - 1}
 	l.readChar()
 	return l
 }
@@ -130,8 +136,11 @@ func (l *Lexer) NextToken() token.Token {
 		tok = l.newToken(token.RBracket, l.ch)
 		l.readChar()
 	case '"':
-		lit, ok := l.readString()
+		lit, template, ok := l.readString()
 		tok.Type, tok.Literal = token.String, lit
+		if template {
+			tok.Type = token.Template
+		}
 		if !ok {
 			tok.Type, tok.Literal = token.Illegal, `"`+lit
 		}
@@ -238,25 +247,86 @@ func (l *Lexer) readNumber() (string, token.Type) {
 }
 
 // readString reads a string literal. ok is false if the input ends before the
-// closing quote
-func (l *Lexer) readString() (value string, ok bool) {
-	l.readChar()
-	pos := l.position
-
-	for l.ch != '"' && l.ch != 0 {
-		if l.ch == '\\' && l.peekChar() != 0 {
-			l.readChar()
-		}
+// closing quote. template is set when it holds ${...} parts, then value is
+// the raw text and the parser splits and unescapes it
+func (l *Lexer) readString() (value string, template, ok bool) {
+	start := l.position
+	end := SkipString(l.input, start)
+	if end < 0 {
+		end = len(l.input)
+	}
+	for l.position < end && l.ch != 0 {
 		l.readChar()
 	}
-
-	raw := l.input[pos:l.position]
+	raw := l.input[start+1 : end]
 	if l.ch != '"' {
-		return raw, false
+		return raw, false, false
 	}
 	l.readChar()
-	return unescape(raw), true
+	if HasInterpolation(raw) {
+		return raw, true, true
+	}
+	return unescape(raw), false, true
 }
+
+// SkipString takes s[i] == '"' and returns the index of the closing quote,
+// stepping over escapes and whole ${...} parts, which can hold strings of
+// their own. -1 if the string never ends
+func SkipString(s string, i int) int {
+	for j := i + 1; j < len(s); j++ {
+		switch {
+		case s[j] == '\\':
+			j++
+		case s[j] == '$' && j+1 < len(s) && s[j+1] == '{':
+			end := MatchBrace(s, j+1)
+			if end < 0 {
+				return -1
+			}
+			j = end
+		case s[j] == '"':
+			return j
+		}
+	}
+	return -1
+}
+
+// MatchBrace takes s[i] == '{' and returns the index of its closing brace
+func MatchBrace(s string, i int) int {
+	depth := 0
+	for j := i; j < len(s); j++ {
+		switch s[j] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return j
+			}
+		case '"':
+			j = SkipString(s, j)
+			if j < 0 {
+				return -1
+			}
+		}
+	}
+	return -1
+}
+
+// HasInterpolation reports whether the raw text of a string has a ${ that
+// isn't escaped
+func HasInterpolation(raw string) bool {
+	for j := 0; j < len(raw); j++ {
+		if raw[j] == '\\' {
+			j++
+		} else if raw[j] == '$' && j+1 < len(raw) && raw[j+1] == '{' {
+			return true
+		}
+	}
+	return false
+}
+
+// Unescape turns the escapes of a string literal into the characters
+func Unescape(s string) string { return unescape(s) }
 
 func (l *Lexer) twoCharToken(typ token.Type) token.Token {
 	ch := l.ch
@@ -320,6 +390,8 @@ func unescape(s string) string {
 			out = append(out, 'u')
 		case '"':
 			out = append(out, '"')
+		case '$':
+			out = append(out, '$')
 		case '\\':
 			out = append(out, '\\')
 		default:

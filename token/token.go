@@ -17,6 +17,8 @@ const (
 	Int    = "INT"
 	Float  = "FLOAT"
 	String = "STRING"
+	// Template is a string with ${...} parts, the literal is its raw text
+	Template = "TEMPLATE"
 
 	Assign   = "="
 	Plus     = "+"

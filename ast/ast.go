@@ -331,6 +331,17 @@ func (sl *StringLiteral) expressionNode()      {}
 func (sl *StringLiteral) TokenLiteral() string { return sl.Token.Literal }
 func (sl *StringLiteral) String() string       { return `"` + sl.Value + `"` }
 
+// TemplateLiteral is "text ${expr} text". Parts are the pieces in order,
+// text as StringLiterals, each turned into text like string() does
+type TemplateLiteral struct {
+	Token token.Token
+	Parts []Expression
+}
+
+func (tl *TemplateLiteral) expressionNode()      {}
+func (tl *TemplateLiteral) TokenLiteral() string { return tl.Token.Literal }
+func (tl *TemplateLiteral) String() string       { return `"` + tl.Token.Literal + `"` }
+
 type Boolean struct {
 	Token token.Token
 	Value bool
@@ -803,6 +814,8 @@ func Position(node Node) (line, column int) {
 	case *FloatLiteral:
 		tok = n.Token
 	case *StringLiteral:
+		tok = n.Token
+	case *TemplateLiteral:
 		tok = n.Token
 	case *Boolean:
 		tok = n.Token

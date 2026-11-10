@@ -73,6 +73,10 @@ func walk(n ast.Node, visit func(ast.Node) bool) bool {
 		for _, e := range n.Elements {
 			addExpr(e)
 		}
+	case *ast.TemplateLiteral:
+		for _, e := range n.Parts {
+			addExpr(e)
+		}
 	case *ast.MapLiteral:
 		for _, p := range n.Pairs {
 			addExpr(p.Key)

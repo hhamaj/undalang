@@ -427,6 +427,22 @@ eprint("five\n")
 println("six")
 println(read_line(), len(read_stdin()))
 `,
+	"templates": `import "strings" as s
+struct User { name: string, age: int }
+let u = User("ada", 36)
+let xs = [1, 2, 3]
+println("hi ${u.name}, you are ${u.age + 1} next year")
+println("list ${xs} len ${len(xs)} map ${ {"a": 1} } nested ${"in ${s.upper("ner")}"} done")
+println("struct ${u} nil ${nil} float ${1.5} bool ${1 < 2}")
+println("escaped \${not} and \$ and \"q\" ${"x"}")
+println("${1}${2}")
+fn greet(n) { "hello ${n}!" }
+println(greet("bo"))
+let mut m = {"k": [1]}
+m["k"][0] = 2
+println("${m["k"][0]} ${m}")
+`,
+	"err_template":     "fn f(n) { \"value ${n + 1}\" }\nprintln(f(1))\nf(\"x\")",
 	"err_sort_mixed":   "import \"arrays\" as arrays\narrays.sort([3, \"x\", 1, true])",
 	"err_sort_by_maps": "import \"arrays\" as arrays\narrays.sort_by([1, 2], fn(x) { {\"k\": x} })",
 	"err_sum":          "import \"arrays\" as arrays\narrays.sum([1, \"2\"])",
