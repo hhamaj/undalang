@@ -406,6 +406,11 @@ for x in [1, 2, 3] { if x == 1 { continue } else if x == 2 { continue } else { p
 println(lt("a", "b"), lt("b", "a"), lt("ab", "a"), lt("", ""), lt("z", "ç"))
 println("\x41\u{e7}\u{1F600}", len("a\r\nb"), len("\0"))
 `,
+	"stdlib_v2": `import "arrays" as a
+println(a.sort([3, 1.5, 2, -1]), a.sort(["b", "a", "ç", "C"]), a.sort([]))
+let people = [["bo", 3], ["ada", 5], ["cy", 3], ["di", 5]]
+println(a.sort_by(people, fn(p) { [-p[1], p[0]] }), a.sort_by(people, fn(p) { p[1] }))
+`,
 	"stderr_order": `println("one")
 eprintln("two", [3])
 print("four ")
@@ -413,6 +418,8 @@ eprint("five\n")
 println("six")
 println(read_line(), len(read_stdin()))
 `,
+	"err_sort_mixed":   "import \"arrays\" as arrays\narrays.sort([3, \"x\", 1, true])",
+	"err_sort_by_maps": "import \"arrays\" as arrays\narrays.sort_by([1, 2], fn(x) { {\"k\": x} })",
 	"err_string_minus": "fn s(a, b) { a * b }\ns(\"x\", \"y\")",
 	"element_types": `struct P { x: int }
 let xs: array[int] = [1, 2, 3]

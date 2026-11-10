@@ -93,6 +93,8 @@ func StdModules(apply Applier) map[string]*object.Module {
 			"reduce":  builtin(arraysReduce(apply)),
 			"reverse": builtin(arraysReverse),
 			"slice":   builtin(arraysSlice),
+			"sort":    builtin(arraysSort),
+			"sort_by": builtin(arraysSortBy(apply)),
 		}},
 		"maps": {Name: "maps", Members: map[string]object.Object{
 			"get":    builtin(mapsGet),

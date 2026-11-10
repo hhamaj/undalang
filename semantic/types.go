@@ -282,6 +282,8 @@ var StdModules = map[string]map[string]*Signature{
 		"reduce":  sig("arrays.reduce", 3, 3, KUnknown, KArray, KUnknown, KUnknown),
 		"reverse": sig("arrays.reverse", 1, 1, KArray, KArray),
 		"slice":   sig("arrays.slice", 3, 3, KArray, KArray, KInt, KInt),
+		"sort":    sig("arrays.sort", 1, 1, KArray, KArray),
+		"sort_by": sig("arrays.sort_by", 2, 2, KArray, KArray, KUnknown),
 	},
 	"maps": {
 		"get":    sig("maps.get", 2, 3, KUnknown, KMap, KUnknown, KUnknown),

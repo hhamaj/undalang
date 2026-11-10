@@ -2824,6 +2824,78 @@ U_BUILTIN_FN(uos_try_remove) { (void)env_; U_ATTEMPT(uos_remove_impl("os.try_rem
 
 /* module tables */
 
+/*
+ * sorting, searching and the newer strings/maps helpers. builtins/collections.go
+ * is the interpreter's copy and has to fail the same way on the same input
+ */
+
+/* numbers with numbers, strings with strings, arrays element by element */
+static int u_order(const char *name, UValue a, UValue b) {
+    if ((a.tag == U_INT || a.tag == U_FLOAT) && (b.tag == U_INT || b.tag == U_FLOAT)) {
+        if (a.tag == U_INT && b.tag == U_INT) return a.as.i < b.as.i ? -1 : a.as.i > b.as.i;
+        double x = u_num(a), y = u_num(b);
+        return x < y ? -1 : x > y;
+    }
+    if (a.tag == U_STR && b.tag == U_STR) {
+        int c = u_str_cmp(a.as.s, b.as.s);
+        return c < 0 ? -1 : c > 0;
+    }
+    if (a.tag == U_ARR && b.tag == U_ARR) {
+        for (size_t i = 0; i < a.as.a->len && i < b.as.a->len; i++) {
+            int c = u_order(name, a.as.a->items[i], b.as.a->items[i]);
+            if (c) return c;
+        }
+        return a.as.a->len < b.as.a->len ? -1 : a.as.a->len > b.as.a->len;
+    }
+    u_panic("%s: can't order %s and %s", name, u_type_name(a), u_type_name(b));
+}
+
+/* the same top-down merge sort as mergeSort in collections.go */
+static void u_merge_sort(const char *name, size_t *idx, size_t *tmp, size_t n, UArr *keys) {
+    if (n < 2) return;
+    size_t mid = n / 2;
+    u_merge_sort(name, idx, tmp, mid, keys);
+    u_merge_sort(name, idx + mid, tmp + mid, n - mid, keys);
+    memcpy(tmp, idx, n * sizeof(size_t));
+    size_t i = 0, j = mid, k = 0;
+    while (i < mid && j < n) {
+        if (u_order(name, keys->items[tmp[j]], keys->items[tmp[i]]) < 0) idx[k++] = tmp[j++];
+        else idx[k++] = tmp[i++];
+    }
+    while (i < mid) idx[k++] = tmp[i++];
+    while (j < n) idx[k++] = tmp[j++];
+}
+
+static UValue u_sort_stable(const char *name, UArr *src, UArr *keys) {
+    size_t n = src->len;
+    size_t *idx = u_alloc((n ? n : 1) * sizeof(size_t));
+    size_t *tmp = u_alloc((n ? n : 1) * sizeof(size_t));
+    for (size_t i = 0; i < n; i++) idx[i] = i;
+    u_merge_sort(name, idx, tmp, n, keys);
+    UArr *a = u_arr_new(n);
+    for (size_t i = 0; i < n; i++) a->items[a->len++] = src->items[idx[i]];
+    return uv_arrv(a);
+}
+
+U_BUILTIN_FN(ua_sort) {
+    (void)env_;
+    U_ARGC("arrays.sort", 1);
+    UArr *src = u_want_arr(argv[0], "arrays.sort expects ARRAY, got %s");
+    return u_sort_stable("arrays.sort", src, src);
+}
+
+U_BUILTIN_FN(ua_sort_by) {
+    (void)env_;
+    U_ARGC("arrays.sort_by", 2);
+    UArr *src = u_want_arr(argv[0], "arrays.sort_by first argument must be ARRAY, got %s");
+    UArr *keys = u_arr_new(src->len);
+    for (size_t i = 0; i < src->len; i++) {
+        UValue arg = src->items[i];
+        keys->items[keys->len++] = u_call(argv[1], 1, &arg);
+    }
+    return u_sort_stable("arrays.sort_by", src, keys);
+}
+
 typedef struct { const char *name; UCode code; const char *qualified; } UBuiltinDef;
 
 static const UBuiltinDef u_strings_defs[] = {
@@ -2836,7 +2908,8 @@ static const UBuiltinDef u_arrays_defs[] = {
     {"append", ua_append, "arrays.append"}, {"filter", ua_filter, "arrays.filter"}, {"first", ua_first, "arrays.first"},
     {"join", ua_join, "arrays.join"}, {"last", ua_last, "arrays.last"}, {"map", ua_map, "arrays.map"},
     {"range", ua_range, "arrays.range"}, {"reduce", ua_reduce, "arrays.reduce"}, {"reverse", ua_reverse, "arrays.reverse"},
-    {"slice", ua_slice, "arrays.slice"}, {NULL, NULL, NULL}};
+    {"slice", ua_slice, "arrays.slice"}, {"sort", ua_sort, "arrays.sort"}, {"sort_by", ua_sort_by, "arrays.sort_by"},
+    {NULL, NULL, NULL}};
 static const UBuiltinDef u_maps_defs[] = {
     {"get", um_get, "maps.get"}, {"has", um_has, "maps.has"}, {"keys", um_keys, "maps.keys"},
     {"merge", um_merge, "maps.merge"}, {"set", um_set, "maps.set"}, {"values", um_values, "maps.values"},
