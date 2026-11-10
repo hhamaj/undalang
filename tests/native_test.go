@@ -404,6 +404,7 @@ for x in [1, 2, 3] { if x == 1 { continue } else if x == 2 { continue } else { p
 `,
 	"string_order": `fn lt(a, b) { [a < b, a > b, a <= b, a >= b] }
 println(lt("a", "b"), lt("b", "a"), lt("ab", "a"), lt("", ""), lt("z", "ç"))
+println("\x41\u{e7}\u{1F600}", len("a\r\nb"), len("\0"))
 `,
 	"stderr_order": `println("one")
 eprintln("two", [3])

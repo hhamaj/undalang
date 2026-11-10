@@ -1,6 +1,12 @@
 package lexer
 
-import "undalang/token"
+import (
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"undalang/token"
+)
 
 type Lexer struct {
 	input        string
@@ -286,6 +292,32 @@ func unescape(s string) string {
 			out = append(out, '\n')
 		case 't':
 			out = append(out, '\t')
+		case 'r':
+			out = append(out, '\r')
+		case '0':
+			out = append(out, 0)
+		case 'x':
+			// \x41, ascii only so strings stay valid utf-8
+			if i+2 < len(s) {
+				if v, err := strconv.ParseUint(s[i+1:i+3], 16, 8); err == nil && v < 0x80 {
+					out = append(out, byte(v))
+					i += 2
+					continue
+				}
+			}
+			out = append(out, 'x')
+		case 'u':
+			// \u{1F600}
+			if i+1 < len(s) && s[i+1] == '{' {
+				if end := strings.IndexByte(s[i:], '}'); end > 2 {
+					if v, err := strconv.ParseUint(s[i+2:i+end], 16, 32); err == nil && utf8.ValidRune(rune(v)) {
+						out = utf8.AppendRune(out, rune(v))
+						i += end
+						continue
+					}
+				}
+			}
+			out = append(out, 'u')
 		case '"':
 			out = append(out, '"')
 		case '\\':
