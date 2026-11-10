@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"undalang/builtins"
 	"undalang/compiler"
 	"undalang/diag"
 	"undalang/runner"
@@ -24,7 +25,8 @@ type Backend interface {
 	Name() string
 	// Describe says what the backend is good at, for --help
 	Describe() string
-	Run(path string, stdin io.Reader, stdout, stderr io.Writer) int
+	// args are the program's own arguments, what process.args() returns
+	Run(path string, args []string, stdin io.Reader, stdout, stderr io.Writer) int
 }
 
 var backends = map[string]Backend{}
@@ -63,7 +65,8 @@ type interp struct{}
 
 func (interp) Name() string     { return "interp" }
 func (interp) Describe() string { return "tree-walking interpreter, runs without checking first" }
-func (interp) Run(path string, _ io.Reader, stdout, stderr io.Writer) int {
+func (interp) Run(path string, args []string, _ io.Reader, stdout, stderr io.Writer) int {
+	builtins.ScriptArgs = args
 	return runner.RunFile(path, stdout, stderr)
 }
 
@@ -71,7 +74,7 @@ type native struct{}
 
 func (native) Name() string     { return "native" }
 func (native) Describe() string { return "compiles to C and runs the executable, needs a C compiler" }
-func (native) Run(path string, stdin io.Reader, stdout, stderr io.Writer) int {
+func (native) Run(path string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	dir, err := os.MkdirTemp("", "unda-run-")
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
@@ -88,7 +91,7 @@ func (native) Run(path string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	cmd := exec.Command(exe)
+	cmd := exec.Command(exe, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError

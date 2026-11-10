@@ -186,6 +186,8 @@ go run ./cmd/unda build examples/phase1_data_pipeline.unda -o app # native execu
 go run ./cmd/unda run --native examples/phase1_data_pipeline.unda # build + run
 ```
 
+Flags go before the file; everything after it is the program's own, `process.args()` returns them (without the program name) in both backends.
+
 `unda build` needs a C compiler (`cc`, or `$CC`). Pass `--emit-c out.c` to keep the generated C.
 
 ### Backends
@@ -224,7 +226,6 @@ Native executables free unused memory with a conservative mark-and-sweep garbage
 Current limitations:
 
 - `time.format` is not available natively yet (`unda build` reports it at compile time).
-- `process.args()` returns the executable's own arguments.
 - Recursion is limited to 10000 nested calls in both backends.
 
 </details>
@@ -572,7 +573,7 @@ Standard modules:
 - `json`: `parse`, `try_parse`, `stringify`
 - `math`: `abs`, `ceil`, `floor`, `max`, `min`, `pow`, `round`, `sqrt`
 - `time`: `now`, `unix`, `format`
-- `process`: `args`, `env`, `run`, `try_run`
+- `process`: `args` (the program's arguments), `env`, `run`, `try_run`
 - `mem`: `alloc`, `free`, `size`, `get_`/`set_` for `i8`…`u64`, `f32`, `f64`, `cstring`
 - `bits`: `and`, `or`, `xor`, `not`, `shl`, `shr` (keeps the sign), `ushr` (fills with zeros), `count` (set bits), all on the 64 bits of an int
 - `os`: `exit`, `exists`, `is_dir`, `list_dir`, `mkdir`, `remove`, `cwd`, `getpid`, plus `try_list_dir`, `try_mkdir` and `try_remove`

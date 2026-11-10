@@ -15,6 +15,10 @@ import (
 	"undalang/object"
 )
 
+// ScriptArgs are the arguments given to the program after its file name,
+// what process.args() returns
+var ScriptArgs []string
+
 func New(out io.Writer) map[string]*object.Builtin {
 	b := map[string]*object.Builtin{
 		"print":   builtin(func(args ...object.Object) object.Object { fmt.Fprint(out, joinArgs(args)); return &object.Nil{} }),
@@ -125,7 +129,7 @@ func StdModules(apply Applier) map[string]*object.Module {
 				if len(args) != 0 {
 					return errorf("process.args expects 0 arguments, got %d", len(args))
 				}
-				return stringsToArray(os.Args)
+				return stringsToArray(ScriptArgs)
 			}),
 			"env":     builtin(processEnv),
 			"run":     plain("process.run", processRun),

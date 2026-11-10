@@ -2345,8 +2345,9 @@ U_BUILTIN_FN(ut_format) {
 U_BUILTIN_FN(up_args) {
     (void)env_; (void)argv;
     if (argc != 0) u_panic("process.args expects 0 arguments, got %d", argc);
-    UArr *a = u_arr_new((size_t)u_argc);
-    for (int i = 0; i < u_argc; i++) u_arr_push(a, uv_cstr(u_argv[i]));
+    /* the program's own name isn't an argument */
+    UArr *a = u_arr_new(u_argc > 0 ? (size_t)(u_argc - 1) : 0);
+    for (int i = 1; i < u_argc; i++) u_arr_push(a, uv_cstr(u_argv[i]));
     return uv_arrv(a);
 }
 
