@@ -658,9 +658,9 @@ func evalInfixExpression(operator string, left, right object.Object) object.Obje
 	case isNumber(left) && isNumber(right):
 		return evalNumberInfixExpression(operator, left, right)
 	case operator == "==":
-		return nativeBool(objectsEqual(left, right))
+		return nativeBool(object.Equal(left, right))
 	case operator == "!=":
-		return nativeBool(!objectsEqual(left, right))
+		return nativeBool(!object.Equal(left, right))
 	case left.Type() == object.StringObj && right.Type() == object.StringObj:
 		return evalStringInfixExpression(operator, left.(*object.String), right.(*object.String))
 	case operator == "&&" || operator == "||":
@@ -889,7 +889,7 @@ func matchPattern(pattern ast.Pattern, value object.Object, env *object.Environm
 		if isAbrupt(expected) {
 			return false, expected
 		}
-		return objectsEqual(value, expected), nil
+		return object.Equal(value, expected), nil
 	case *ast.ArrayPattern:
 		arr, ok := value.(*object.Array)
 		if !ok || len(arr.Elements) < len(p.Elements) || (!p.HasRest && len(arr.Elements) != len(p.Elements)) {
@@ -1156,65 +1156,6 @@ func numberValue(obj object.Object) float64 {
 		return obj.Value
 	default:
 		return 0
-	}
-}
-
-func objectsEqual(left, right object.Object) bool {
-	switch left := left.(type) {
-	case *object.Boolean:
-		right, ok := right.(*object.Boolean)
-		return ok && left.Value == right.Value
-	case *object.Nil:
-		_, ok := right.(*object.Nil)
-		return ok
-	case *object.String:
-		right, ok := right.(*object.String)
-		return ok && left.Value == right.Value
-	case *object.Integer:
-		right, ok := right.(*object.Integer)
-		return ok && left.Value == right.Value
-	case *object.Float:
-		right, ok := right.(*object.Float)
-		return ok && left.Value == right.Value
-	case *object.Array:
-		right, ok := right.(*object.Array)
-		if !ok || len(left.Elements) != len(right.Elements) {
-			return false
-		}
-		for i := range left.Elements {
-			if !objectsEqual(left.Elements[i], right.Elements[i]) {
-				return false
-			}
-		}
-		return true
-	case *object.Result:
-		right, ok := right.(*object.Result)
-		return ok && left.Ok == right.Ok && objectsEqual(left.Value, right.Value)
-	case *object.Struct:
-		right, ok := right.(*object.Struct)
-		if !ok || left.Def != right.Def {
-			return false
-		}
-		for i := range left.Fields {
-			if !objectsEqual(left.Fields[i], right.Fields[i]) {
-				return false
-			}
-		}
-		return true
-	case *object.Map:
-		right, ok := right.(*object.Map)
-		if !ok || len(left.Pairs) != len(right.Pairs) {
-			return false
-		}
-		for key, leftPair := range left.Pairs {
-			rightPair, ok := right.Pairs[key]
-			if !ok || !objectsEqual(leftPair.Value, rightPair.Value) {
-				return false
-			}
-		}
-		return true
-	default:
-		return left == right
 	}
 }
 
