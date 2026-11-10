@@ -975,7 +975,18 @@ func (p *Parser) parseMatchExpression() ast.Expression {
 			return nil
 		}
 		p.nextToken()
-		arm.Value = p.parseExpression(lowest)
+		if p.armBlockAhead() {
+			// `-> { stmts }` runs a block. it's an if that always takes its
+			// branch, so every backend already knows how to run it
+			tok := p.curToken
+			arm.Value = &ast.IfExpression{
+				Token:       tok,
+				Condition:   &ast.Boolean{Token: tok, Value: true},
+				Consequence: p.parseBlockStatement(),
+			}
+		} else {
+			arm.Value = p.parseExpression(lowest)
+		}
 		if arm.Value == nil {
 			return nil
 		}
@@ -989,6 +1000,12 @@ func (p *Parser) parseMatchExpression() ast.Expression {
 		return nil
 	}
 	return expression
+}
+
+// armBlockAhead tells a block after -> from a map literal. {} and {key: ...}
+// stay maps, anything else in braces is a block
+func (p *Parser) armBlockAhead() bool {
+	return p.curTokenIs(token.LBrace) && !p.peekTokenIs(token.RBrace) && p.peekAt(1).Type != token.Colon
 }
 
 // parsePattern parses a match pattern starting at the current token. a bare

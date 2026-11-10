@@ -299,7 +299,7 @@ for word in ["a", "b", "a"] {
 println(counts)    // {a: 2, b: 1}
 ```
 
-`match` arms take patterns. A bare name binds the value, `[first, ..rest]` destructures arrays, `{"key": value}` destructures maps (extra keys are allowed), and `if` adds a guard. Literals compare by value; to compare against a variable, use a guard such as `x if x == limit`.
+`match` arms take patterns. A bare name binds the value, `[first, ..rest]` destructures arrays, `{"key": value}` destructures maps (extra keys are allowed), and `if` adds a guard. Literals compare by value; to compare against a variable, use a guard such as `x if x == limit`. An arm's body can be a block, `-> { ... }`, whose last expression is the arm's value; `{}` and `{key: value}` after `->` are still map literals.
 
 ```unda
 fn describe(v) {

@@ -442,7 +442,22 @@ let mut m = {"k": [1]}
 m["k"][0] = 2
 println("${m["k"][0]} ${m}")
 `,
-	"err_template":     "fn f(n) { \"value ${n + 1}\" }\nprintln(f(1))\nf(\"x\")",
+	"err_template": "fn f(n) { \"value ${n + 1}\" }\nprintln(f(1))\nf(\"x\")",
+	"match_blocks": `fn describe(v) {
+    match v {
+        0 -> {},
+        1 -> {"one": 1},
+        k if k == 2 -> {k: "two"},
+        n if n < 0 -> {
+            let abs = -n
+            println("negative", abs)
+            abs * 10
+        },
+        _ -> { println("other"); nil },
+    }
+}
+println(describe(0), describe(1), describe(2), describe(-4), describe(9))
+`,
 	"err_sort_mixed":   "import \"arrays\" as arrays\narrays.sort([3, \"x\", 1, true])",
 	"err_sort_by_maps": "import \"arrays\" as arrays\narrays.sort_by([1, 2], fn(x) { {\"k\": x} })",
 	"err_sum":          "import \"arrays\" as arrays\narrays.sum([1, \"2\"])",
