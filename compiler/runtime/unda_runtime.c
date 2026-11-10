@@ -2951,6 +2951,34 @@ U_BUILTIN_FN(ua_find) {
     return i < 0 ? uv_nil() : argv[0].as.a->items[i];
 }
 
+U_BUILTIN_FN(um_delete) {
+    (void)env_;
+    U_ARGC("maps.delete", 2);
+    UMap *m = u_want_map(argv[0], "maps.delete first argument must be MAP, got %s");
+    if (!u_hashable(argv[1])) u_panic("maps.delete key is not hashable: %s", u_type_name(argv[1]));
+    UMap *out = u_map_new();
+    for (size_t i = 0; i < m->len; i++)
+        if (!u_key_eq(m->entries[i].key, argv[1])) u_map_set(out, m->entries[i].key, m->entries[i].value);
+    return uv_mapv(out);
+}
+
+U_BUILTIN_FN(um_entries) {
+    (void)env_;
+    U_ARGC("maps.entries", 1);
+    UMap *m = u_want_map(argv[0], "maps.entries expects MAP, got %s");
+    size_t *idx = u_sorted_entries(m);
+    UArr *a = u_arr_new(m->len);
+    for (size_t i = 0; i < m->len; i++) {
+        UArr *pair = u_arr_new(2);
+        pair->items[0] = m->entries[idx[i]].key;
+        pair->items[1] = m->entries[idx[i]].value;
+        pair->len = 2;
+        a->items[a->len++] = uv_arrv(pair);
+    }
+    free(idx);
+    return uv_arrv(a);
+}
+
 typedef struct { const char *name; UCode code; const char *qualified; } UBuiltinDef;
 
 static const UBuiltinDef u_strings_defs[] = {
@@ -2970,6 +2998,7 @@ static const UBuiltinDef u_arrays_defs[] = {
 static const UBuiltinDef u_maps_defs[] = {
     {"get", um_get, "maps.get"}, {"has", um_has, "maps.has"}, {"keys", um_keys, "maps.keys"},
     {"merge", um_merge, "maps.merge"}, {"set", um_set, "maps.set"}, {"values", um_values, "maps.values"},
+    {"delete", um_delete, "maps.delete"}, {"entries", um_entries, "maps.entries"},
     {NULL, NULL, NULL}};
 static const UBuiltinDef u_json_defs[] = {
     {"parse", uj_parse, "json.parse"}, {"stringify", uj_stringify, "json.stringify"},

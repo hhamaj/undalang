@@ -238,3 +238,45 @@ func arraysFind(apply Applier) object.BuiltinFunction {
 			return &object.Nil{}
 		})
 }
+
+func mapsDelete(args ...object.Object) object.Object {
+	if len(args) != 2 {
+		return errorf("maps.delete expects 2 arguments, got %d", len(args))
+	}
+	m, ok := args[0].(*object.Map)
+	if !ok {
+		return errorf("maps.delete first argument must be MAP, got %s", args[0].Type())
+	}
+	key, ok := args[1].(object.Hashable)
+	if !ok {
+		return errorf("maps.delete key is not hashable: %s", args[1].Type())
+	}
+	out := &object.Map{Pairs: make(map[object.HashKey]object.MapPair, len(m.Pairs))}
+	for k, v := range m.Pairs {
+		if k != key.HashKey() {
+			out.Pairs[k] = v
+		}
+	}
+	return out
+}
+
+// mapsEntries gives [key, value] pairs in the order for loops use
+func mapsEntries(args ...object.Object) object.Object {
+	if len(args) != 1 {
+		return errorf("maps.entries expects 1 argument, got %d", len(args))
+	}
+	m, ok := args[0].(*object.Map)
+	if !ok {
+		return errorf("maps.entries expects MAP, got %s", args[0].Type())
+	}
+	keys, ok := mapsKeys(m).(*object.Array)
+	if !ok {
+		return errorf("maps.entries: could not list keys")
+	}
+	out := make([]object.Object, 0, len(keys.Elements))
+	for _, k := range keys.Elements {
+		pair := m.Pairs[k.(object.Hashable).HashKey()]
+		out = append(out, &object.Array{Elements: []object.Object{pair.Key, pair.Value}})
+	}
+	return &object.Array{Elements: out}
+}

@@ -407,6 +407,7 @@ println(lt("a", "b"), lt("b", "a"), lt("ab", "a"), lt("", ""), lt("z", "ç"))
 println("\x41\u{e7}\u{1F600}", len("a\r\nb"), len("\0"))
 `,
 	"stdlib_v2": `import "arrays" as a
+import "maps" as m
 println(a.sort([3, 1.5, 2, -1]), a.sort(["b", "a", "ç", "C"]), a.sort([]))
 let people = [["bo", 3], ["ada", 5], ["cy", 3], ["di", 5]]
 println(a.sort_by(people, fn(p) { [-p[1], p[0]] }), a.sort_by(people, fn(p) { p[1] }))
@@ -414,6 +415,7 @@ println(a.index_of([1, 2, 3], 3), a.index_of([1], 9), a.contains(["x", [1]], [1]
 println(a.sum([1, 2, 3]), a.sum([1, 2.5]), a.sum([]), a.sum([9223372036854775807, 1]))
 println(a.any([1, 2, 3], fn(x) { x > 2 }), a.all([1, 2, 3], fn(x) { x > 2 }), a.all([], fn(x) { false }))
 println(a.find([1, 2, 3], fn(x) { x > 1 }), a.find([1], fn(x) { x > 5 }))
+println(m.delete({"a": 1, "b": 2}, "a"), m.delete({"a": 1}, "z"), m.entries({"b": 2, "a": 1}))
 `,
 	"stderr_order": `println("one")
 eprintln("two", [3])
@@ -425,6 +427,7 @@ println(read_line(), len(read_stdin()))
 	"err_sort_mixed":   "import \"arrays\" as arrays\narrays.sort([3, \"x\", 1, true])",
 	"err_sort_by_maps": "import \"arrays\" as arrays\narrays.sort_by([1, 2], fn(x) { {\"k\": x} })",
 	"err_sum":          "import \"arrays\" as arrays\narrays.sum([1, \"2\"])",
+	"err_delete_key":   "import \"maps\" as maps\nmaps.delete({}, [1])",
 	"err_string_minus": "fn s(a, b) { a * b }\ns(\"x\", \"y\")",
 	"element_types": `struct P { x: int }
 let xs: array[int] = [1, 2, 3]
