@@ -396,6 +396,12 @@ println(any_v, exact(p), exact(Point(0, 0)))
 	"err_struct_typed":     "struct P { a }\nstruct Q { a }\nfn f(p: P) { p }\nfn call(v) { f(v) }\ncall(Q(1))",
 	"err_struct_json":      "import \"json\" as json\nstruct P { a }\njson.stringify(P(1))",
 	"err_struct_add":       "struct P { a }\nfn add(v) { v + 1 }\nadd(P(1))",
+	"else_if": `fn size(n) {
+    if n > 100 { "big" } else if n > 10 { "mid" } else if n > 0 { "small" } else { "none" }
+}
+println(size(500), size(50), size(5), size(0))
+for x in [1, 2, 3] { if x == 1 { continue } else if x == 2 { continue } else { println("three") } }
+`,
 	"element_types": `struct P { x: int }
 let xs: array[int] = [1, 2, 3]
 let m: map[string, array[int]] = {"a": xs, "b": []}

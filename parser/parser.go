@@ -658,6 +658,18 @@ func (p *Parser) parseIfExpression() ast.Expression {
 
 	if p.peekTokenIs(token.Else) {
 		p.nextToken()
+		// else if is just an else block holding one more if
+		if p.peekTokenIs(token.If) {
+			p.nextToken()
+			block := &ast.BlockStatement{Token: p.curToken}
+			nested := p.parseIfExpression()
+			if nested == nil {
+				return nil
+			}
+			block.Statements = []ast.Statement{&ast.ExpressionStatement{Token: p.curToken, Expression: nested}}
+			expression.Alternative = block
+			return expression
+		}
 		if !p.expectPeek(token.LBrace) {
 			return nil
 		}
