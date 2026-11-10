@@ -689,6 +689,14 @@ static void u_map_literal_key(UValue key) {
     if (!u_hashable(key)) u_panic("unusable as map key: %s", u_type_name(key));
 }
 
+/* byte order like go's string comparison, code point order for utf-8 */
+static int u_str_cmp(const UStr *a, const UStr *b) {
+    size_t n = a->len < b->len ? a->len : b->len;
+    int c = n ? memcmp(a->data, b->data, n) : 0;
+    if (c) return c;
+    return a->len < b->len ? -1 : a->len > b->len;
+}
+
 /* equality (objectsEqual) */
 
 static bool u_equal(UValue a, UValue b) {
@@ -785,6 +793,10 @@ static UValue u_binop(int op, UValue l, UValue r) {
             memcpy(s->data + l.as.s->len, r.as.s->data, r.as.s->len);
             s->data[s->len] = 0;
             return uv_strv(s);
+        }
+        if (op == OP_LT || op == OP_GT || op == OP_LE || op == OP_GE) {
+            int c = u_str_cmp(l.as.s, r.as.s);
+            return uv_bool(op == OP_LT ? c < 0 : op == OP_GT ? c > 0 : op == OP_LE ? c <= 0 : c >= 0);
         }
         u_panic("unknown operator: STRING %s STRING", u_op_names[op]);
     }

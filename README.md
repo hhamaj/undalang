@@ -261,6 +261,8 @@ Comments start with `//` and run to the end of the line.
 let size = if n > 100 { "big" } else if n > 10 { "mid" } else { "small" }
 ```
 
+Strings compare with `<`, `>`, `<=`, `>=` by code point, so `"B" < "a"` and `"z" < "ç"`.
+
 `m.key` reads a string key from a map, like `m["key"]`; missing keys give `nil`.
 
 Unda supports arrays, maps, indexing, `if`, and `match`. Strings are indexed by character: `len("çay")` is 3 and `"çay"[0]` is `"ç"`.

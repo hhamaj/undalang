@@ -751,6 +751,15 @@ func evalStringInfixExpression(operator string, left, right *object.String) obje
 		return nativeBool(left.Value == right.Value)
 	case "!=":
 		return nativeBool(left.Value != right.Value)
+	// byte order, which for utf-8 is code point order
+	case "<":
+		return nativeBool(left.Value < right.Value)
+	case ">":
+		return nativeBool(left.Value > right.Value)
+	case "<=":
+		return nativeBool(left.Value <= right.Value)
+	case ">=":
+		return nativeBool(left.Value >= right.Value)
 	default:
 		return newError("unknown operator: STRING %s STRING", operator)
 	}

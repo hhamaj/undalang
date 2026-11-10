@@ -407,8 +407,11 @@ func infixResult(op string, l, r Kind) (Kind, string) {
 	case op == "==" || op == "!=":
 		return KBool, ""
 	case l == KString && r == KString:
-		if op == "+" {
+		switch op {
+		case "+":
 			return KString, ""
+		case "<", ">", "<=", ">=":
+			return KBool, ""
 		}
 		return KNever, fmt.Sprintf("unknown operator: STRING %s STRING", op)
 	case op == "&&" || op == "||":
