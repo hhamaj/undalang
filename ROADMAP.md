@@ -248,8 +248,20 @@ Status:
 - in-place updates: an update reuses a container nothing else holds instead of copying it. the copy an update makes is owned, every read that lets a value go somewhere else (bound, passed, stored, iterated, returned by a builtin) clears that, reading an element out doesn't. operands and conditions don't escape since operators never hand an operand on. typed bindings only check the part that changed. the REPL undoes in-place changes when a later check fails. 200000 updates to a 1000-key map: native 5890 → 87 ms, interpreter 28213 → 245 ms (Python 3.14: 100)
 - strict indexing: reading past the end of an array or a string, or `arrays.first`/`last` of an empty one, stops the program instead of giving `nil`, so a wrong index can't travel on as a quiet `nil`. `try_get(v, i)` is the try_ twin, for arrays, strings and maps
 
+- writing real programs: found by writing CLI tools in Unda and fixing what got in the way (`examples/wordfreq.unda` is one)
+  - `else if`
+  - program arguments: `unda run file.unda a b`, `process.args()` is the program's own arguments in both backends (it used to be the Go binary's in the interpreter)
+  - stdin and stderr: `read_line`, `read_stdin`, `eprint`, `eprintln`. the native runtime flushes stdout before touching stderr or stdin, so prompts show and output interleaves like the interpreter's
+  - string interpolation, `"hi ${name}"`. the lexer skips over whole `${...}` parts (strings inside included), the parser parses each one with its real line and column, so errors inside point at the right place
+  - string comparison (`<`, `>`, `<=`, `>=`, code point order), and the escapes `\r`, `\0`, `\x41`, `\u{...}`, `\$`. unknown escapes used to drop the backslash silently, `"\r"` was `r`
+  - block bodies in match arms, `-> { ... }`
+  - library: `arrays.sort`, `sort_by` (stable, keys can be arrays for multi-key sorts), `contains`, `index_of`, `sum`, `any`, `all`, `find`; `strings.index_of`, `chars`, `lines`, `repeat`, `pad_left`, `pad_right`; `maps.delete`, `entries`. sorting is one merge sort written the same way in Go and C, so a mixed array fails on the same pair in both backends
+- `xs = arrays.append(xs, v)` appends in place when nothing else holds xs: 80000 appends 2.2 s → 4 ms native, the interpreter went from quadratic to linear too. a runtime identity check makes sure it's the real arrays.append, anything else is a plain call
+
 Next:
-- `arrays.append` in place, it still copies
+- error handling ergonomics: `unwrap_or`, `map_err`-style helpers so results don't always need a match
+- enums / tagged unions with match, the one data modeling tool still missing
+- `unda test` with `assert`, and `unda fmt`
 - release v0.1 with binaries
 - typed functions compiled to plain C types (int64_t, double), the call depth counter replaced by a guard page, the C runtime compiled once instead of on every build
 - the interpreter reading variables by slot
